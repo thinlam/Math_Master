@@ -1,12 +1,3 @@
-/**
- * Dự án: EFB - English For Beginners
- * Mục đích: Xây dựng ứng dụng học tiếng Anh cơ bản.
- * Người dùng: Người mới bắt đầu học tiếng Anh.
- * Chức năng: Đăng nhập, đăng ký, học từ vựng, ngữ pháp, luyện nghe nói.
- * Công nghệ: React Native, Expo, Firebase, expo-router Tabs.
- * Tác giả: [NHÓM EFB]
- * Ngày tạo: 01/06/2025
- */
 
 import { styles } from '@/components/style/LayoutStyles';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
@@ -38,9 +29,6 @@ export default function TabLayout() {
             case 'index':
               icon = <Ionicons name="home" size={24} color={color} />;
               break;
-            case 'Learn':
-              icon = <FontAwesome5 name="book-open" size={22} color={color} />;
-              break;
             case 'Practice':
               icon = <FontAwesome5 name="trophy" size={22} color={color} />;
               break;
@@ -70,7 +58,6 @@ export default function TabLayout() {
       })}
     >
       <Tabs.Screen name="index" />
-      <Tabs.Screen name="Learn" />
       <Tabs.Screen name="Practice" />
       <Tabs.Screen name="Library" />
       <Tabs.Screen name="Store" />

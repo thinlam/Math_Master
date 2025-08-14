@@ -259,7 +259,7 @@ export default function HomeScreen() {
             <QuickButton
               icon="rocket-outline"
               label={t('startLearning')}
-              onPress={() => router.push('/learn')}
+              onPress={() => router.push('/Learnning/Learn')}
             />
             <QuickButton
               icon="create-outline"
