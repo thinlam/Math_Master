@@ -7,16 +7,16 @@ import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import React, { useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 export default function SignUpScreen() {
@@ -121,7 +121,7 @@ export default function SignUpScreen() {
                 // CHÚ Ý: nếu file này nằm trong app/(auth)/ hãy để ../../assets/...
                 source={require('../../assets/images/math-logo.png')}
                 onError={() => setUseLogoFallback(true)}
-                style={{ width: 72, height: 72, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }}
+                style={{ width: 72, height: 120, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }}
               />
             )}
 
@@ -129,7 +129,8 @@ export default function SignUpScreen() {
               Tạo tài khoản
             </Text>
             <Text style={{ color: subText, marginTop: 4, fontSize: 14 }}>
-              Chào mừng đến với ứng dụng của bạn
+              {'\t'}Chào mừng đến với bậc thầy toán học!
+              {'\n'}Vui lòng điền thông tin bên dưới để đăng ký.
             </Text>
           </View>
 
@@ -305,7 +306,7 @@ export default function SignUpScreen() {
           <View style={{ alignItems: 'center', marginTop: 16 }}>
             <Text style={{ color: subText }}>
               Đã có tài khoản?{' '}
-              <Text style={{ color: '#93c5fd', fontWeight: '700' }} onPress={() => router.push('/auth/LoginScreen')}>
+              <Text style={{ color: '#93c5fd', fontWeight: '700' }} onPress={() => router.push('/(auth)/login')}>
                 Đăng nhập
               </Text>
             </Text>

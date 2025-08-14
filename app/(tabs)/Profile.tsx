@@ -2,19 +2,28 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Alert,
-    FlatList,
-    Linking,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Linking,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+
+/* ===========================
+   Firebase
+   =========================== */
+import { auth, db } from '@/scripts/firebase';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 /* ===========================
    i18n: Từ điển & helper t()
@@ -23,6 +32,7 @@ const I18N = {
   vi: {
     user: 'Người dùng',
     levelSample: 'Lớp 5 – Nâng cao',
+    noClass: 'Chưa chọn lớp',
     points: 'Điểm',
     badges: 'Huy hiệu',
     streak: 'Chuỗi ngày',
@@ -43,14 +53,18 @@ const I18N = {
     terms: 'Điều khoản & Chính sách',
     edit: 'Sửa',
     logout: 'Đăng xuất',
-    loggedOut: 'Bạn đã đăng xuất (demo).',
+    loggedOut: 'Bạn đã đăng xuất.',
     noBadges: 'Chưa có huy hiệu nào — bắt đầu học để nhận huy hiệu nhé!',
     demoEmail: 'user@example.com',
     linkDemo: 'Tính năng demo.',
+    loading: 'Đang tải...',
+    errorLoad: 'Tải hồ sơ thất bại.',
+    pullToRefresh: 'Kéo để làm mới',
   },
   en: {
     user: 'User',
     levelSample: 'Grade 5 – Advanced',
+    noClass: 'No class selected',
     points: 'Points',
     badges: 'Badges',
     streak: 'Streak',
@@ -71,10 +85,13 @@ const I18N = {
     terms: 'Terms & Policy',
     edit: 'Edit',
     logout: 'Log out',
-    loggedOut: 'You have logged out (demo).',
+    loggedOut: 'You have logged out.',
     noBadges: 'No badges yet — start learning to earn some!',
     demoEmail: 'user@example.com',
     linkDemo: 'Demo feature.',
+    loading: 'Loading...',
+    errorLoad: 'Failed to load profile.',
+    pullToRefresh: 'Pull to refresh',
   },
 } as const;
 
@@ -86,13 +103,14 @@ function t(lang: 'vi' | 'en', key: LangKey) {
 /* ===========================
    Kiểu dữ liệu & const
    =========================== */
+type BadgeItem = { id: string; title: string; icon: string };
 type UserProfile = {
   uid: string;
   name: string;
   email: string;
-  level: string;
+  level: string | null; // cho phép null nếu chưa chọn lớp
   points: number;
-  badges: { id: string; title: string; icon: string }[];
+  badges: BadgeItem[];
   streak: number;
   photoURL?: string | null;
 };
@@ -116,21 +134,12 @@ export default function ProfileScreen() {
   const [notifStudy, setNotifStudy] = useState(true);
   const [notifMarketing, setNotifMarketing] = useState(false);
 
-  // --------- User state (fallback demo) ----------
-  const [user, setUser] = useState<UserProfile>({
-    uid: 'demo',
-    name: t('vi', 'user'),
-    email: t('vi', 'demoEmail'),
-    level: t('vi', 'levelSample'),
-    points: 1280,
-    streak: 7,
-    badges: [
-      { id: 'b1', title: 'Tân Binh', icon: 'star-outline' },
-      { id: 'b2', title: 'Chăm Chỉ', icon: 'timer-outline' },
-      { id: 'b3', title: 'Bậc Thầy', icon: 'trophy-outline' },
-    ],
-    photoURL: null,
-  });
+  // --------- User/Auth state ----------
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   // --------- Load settings khi mount ----------
   useEffect(() => {
@@ -148,18 +157,63 @@ export default function ProfileScreen() {
     })();
   }, []);
 
-  // --------- Load lại language mỗi khi focus tab ----------
+  // --------- Lắng nghe đăng nhập/đăng xuất ----------
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setFirebaseUser(u);
+      if (!u) {
+        router.replace('/(auth)/login');
+      }
+    });
+    return unsub;
+  }, [router]);
+
+  // --------- Tải hồ sơ từ Firestore ----------
+  const fetchProfile = useCallback(
+    async (u: User) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const ref = doc(db, 'users', u.uid);
+        const snap = await getDoc(ref);
+        const data = snap.exists() ? (snap.data() as any) : {};
+
+        const profile: UserProfile = {
+          uid: u.uid,
+          name: u.displayName || data.name || t(language, 'user'),
+          email: u.email || data.email || t(language, 'demoEmail'),
+          photoURL: u.photoURL || data.photoURL || null,
+          level: data.level ?? null, // chỉ có khi user đã chọn
+          points: typeof data.points === 'number' ? data.points : 0,
+          streak: typeof data.streak === 'number' ? data.streak : 0,
+          badges: Array.isArray(data.badges) ? data.badges : [],
+        };
+        setUser(profile);
+      } catch (e) {
+        console.error(e);
+        setError(t(language, 'errorLoad'));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [language]
+  );
+
+  // --------- Tải khi có firebaseUser hoặc khi focus tab ----------
+  useEffect(() => {
+    if (firebaseUser) fetchProfile(firebaseUser);
+  }, [firebaseUser, fetchProfile]);
+
   useFocusEffect(
-    React.useCallback(() => {
-      let mounted = true;
+    useCallback(() => {
+      let active = true;
       (async () => {
-        const l = await AsyncStorage.getItem(SETTINGS_KEYS.language);
-        if (mounted && (l === 'vi' || l === 'en')) setLanguage(l);
+        if (active && firebaseUser) await fetchProfile(firebaseUser);
       })();
       return () => {
-        mounted = false;
+        active = false;
       };
-    }, [])
+    }, [firebaseUser, fetchProfile])
   );
 
   // --------- Persist helpers ----------
@@ -167,41 +221,74 @@ export default function ProfileScreen() {
     await AsyncStorage.setItem(k, String(v));
   };
 
-  // --------- (Tùy chọn) Load user từ Firebase ----------
-  // Mặc định: KHÔNG gọi Firebase để tránh lỗi module.
-  // Xem mục "Bật Firestore" ở cuối file nếu bạn muốn bật.
-
-  // Cập nhật user demo theo language (email/level/name có thể đổi theo ngôn ngữ nếu muốn)
-  useEffect(() => {
-    setUser((prev) => ({
-      ...prev,
-      name: prev.name === t(language === 'vi' ? 'en' : 'vi', 'user') ? t(language, 'user') : prev.name,
-      email: t(language, 'demoEmail'),
-      level: t(language, 'levelSample'),
-    }));
-  }, [language]);
-
   const initials = useMemo(() => {
-    const n = user.name?.trim() || '';
+    const n = user?.name?.trim() || '';
     const parts = n.split(/\s+/);
     const a = (parts[0]?.[0] || '').toUpperCase();
     const b = (parts[1]?.[0] || parts[0]?.[1] || '').toUpperCase();
     return (a + b).slice(0, 2) || 'U';
-  }, [user.name]);
+  }, [user?.name]);
 
   const onLogout = async () => {
-    Alert.alert(t(language, 'logout'), t(language, 'loggedOut'));
-    router.replace('/auth/Login'); // Điều hướng về màn hình login nếu có
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      Alert.alert(t(language, 'logout'), t(language, 'loggedOut'));
+      router.replace('/(auth)/login');
+    }
   };
+
+  const onRefresh = useCallback(async () => {
+    if (!firebaseUser) return;
+    setRefreshing(true);
+    await fetchProfile(firebaseUser);
+    setRefreshing(false);
+  }, [firebaseUser, fetchProfile]);
+
+  // --------- UI: Loading / Error ----------
+  if (!firebaseUser || loading) {
+    return (
+      <SafeAreaView style={[styles.container, darkMode && { backgroundColor: '#0B1020' }]}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <ActivityIndicator size="large" />
+          <Text style={{ color: '#CBD5E1' }}>{t(language, 'loading')}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error || !user) {
+    return (
+      <SafeAreaView style={[styles.container, darkMode && { backgroundColor: '#0B1020' }]}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+          <Text style={{ color: '#FCA5A5' }}>{error || t(language, 'errorLoad')}</Text>
+          <TouchableOpacity
+            style={[styles.editBtn, { backgroundColor: '#60A5FA' }]}
+            onPress={() => firebaseUser && fetchProfile(firebaseUser)}
+          >
+            <Ionicons name="refresh" size={18} color="#111827" />
+            <Text style={styles.editTxt}>{t(language, 'pullToRefresh')}</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={[styles.container, darkMode && { backgroundColor: '#0B1020' }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />
+        }
+      >
         {/* Header: Avatar + Tên + Email */}
         <View style={[styles.card, darkMode && styles.cardDark]}>
           <View style={styles.row}>
             <View style={[styles.avatar, darkMode && styles.avatarDark]}>
-              {/* Nếu có URL ảnh thật, đổi sang <Image source={{uri: user.photoURL!}} /> */}
+              {/* Nếu có URL ảnh thật, có thể dùng <Image source={{ uri: user.photoURL! }} style={{ width: 60, height: 60, borderRadius: 999 }} /> */}
               <Text style={[styles.avatarTxt, darkMode && { color: '#E5E7EB' }]}>{initials}</Text>
             </View>
 
@@ -212,9 +299,17 @@ export default function ProfileScreen() {
               <Text style={[styles.email, darkMode && { color: '#94A3B8' }]} numberOfLines={1}>
                 {user.email}
               </Text>
-              <View style={styles.levelPill}>
+
+              {/* Lớp: nếu chưa chọn -> hiển thị "Chưa chọn lớp" (không có nút) */}
+              <View
+                style={[
+                  styles.levelPill,
+                  { marginTop: 8 },
+                  !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' },
+                ]}
+              >
                 <Ionicons name="school-outline" size={16} color="#4F46E5" />
-                <Text style={styles.levelTxt}>{user.level}</Text>
+                <Text style={styles.levelTxt}>{user.level || t(language, 'noClass')}</Text>
               </View>
             </View>
 
@@ -260,7 +355,9 @@ export default function ProfileScreen() {
               {t(language, 'earnedBadges')}
             </Text>
             <TouchableOpacity onPress={() => router.push('/profile/Badges')}>
-              <Text style={[styles.link, darkMode && { color: '#93C5FD' }]}>{t(language, 'viewAll')}</Text>
+              <Text style={[styles.link, darkMode && { color: '#93C5FD' }]}>
+                {t(language, 'viewAll')}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -274,10 +371,7 @@ export default function ProfileScreen() {
               renderItem={({ item }) => (
                 <View style={[styles.badge, darkMode && styles.badgeDark]}>
                   <MaterialCommunityIcons name={item.icon as any} size={22} color="#F59E0B" />
-                  <Text
-                    style={[styles.badgeTxt, darkMode && { color: '#E5E7EB' }]}
-                    numberOfLines={1}
-                  >
+                  <Text style={[styles.badgeTxt, darkMode && { color: '#E5E7EB' }]} numberOfLines={1}>
                     {item.title}
                   </Text>
                 </View>
@@ -326,6 +420,7 @@ export default function ProfileScreen() {
               const next = language === 'vi' ? 'en' : 'vi';
               setLanguage(next);
               await persist(SETTINGS_KEYS.language, next);
+              if (firebaseUser) fetchProfile(firebaseUser);
             }}
             dark={darkMode}
           />
@@ -496,7 +591,7 @@ function SettingPicker({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B1220', // nền đậm
+    backgroundColor: '#0B1220',
   },
   scroll: {
     padding: 16,
@@ -543,8 +638,8 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 2,
   },
+
   levelPill: {
-    marginTop: 8,
     alignSelf: 'flex-start',
     flexDirection: 'row',
     gap: 6,
@@ -687,44 +782,3 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
-
-/* =========================================================
-   Bật Firestore (tùy chọn)
-   ---------------------------------------------------------
-   1) Cài:
-      npm install firebase
-         - hoặc: yarn add firebase
-   2) Tạo scripts/firebase.ts:
-      import { initializeApp } from 'firebase/app';
-      import { getAuth } from 'firebase/auth';
-      import { getFirestore } from 'firebase/firestore';
-      const app = initializeApp({ ...config... });
-      export const auth = getAuth(app);
-      export const db = getFirestore(app);
-
-   3) Tải hồ sơ user thật trong Profile.tsx:
-      import { auth, db } from '@/scripts/firebase';
-      import { doc, getDoc } from 'firebase/firestore';
-      useEffect(() => {
-        (async () => {
-          const u = auth.currentUser;
-          if (!u) return;
-          const ref = doc(db, 'users', u.uid);
-          const snap = await getDoc(ref);
-          if (snap.exists()) {
-            const data = snap.data() as any;
-            setUser(prev => ({
-              ...prev,
-              uid: u.uid,
-              name: u.displayName || prev.name,
-              email: u.email || prev.email,
-              photoURL: u.photoURL || prev.photoURL,
-              level: data.level ?? prev.level,
-              points: data.points ?? prev.points,
-              streak: data.streak ?? prev.streak,
-              badges: Array.isArray(data.badges) ? data.badges : prev.badges,
-            }));
-          }
-        })();
-      }, []);
-   ========================================================= */
