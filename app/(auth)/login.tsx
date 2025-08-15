@@ -22,6 +22,28 @@ import {
   View,
 } from 'react-native';
 
+/** -------------------------------------------------------
+ *  Helper: điều hướng theo role (giống EFB)
+ *  -------------------------------------------------------
+ */
+type AppRole = 'admin' | 'premium' | 'user' | string;
+
+function routeByRole(
+  router: ReturnType<typeof useRouter>,
+  role?: AppRole,
+  opts?: { startMode?: string | null; level?: number | null }
+) {
+  const r = role ?? 'user';
+  if (r === 'admin') return router.replace('/(admin)/home');
+  if (r === 'premium') return router.replace('/premium-home');
+
+  // user: đã setup thì vào tabs, chưa thì vào onboarding
+  if (opts?.startMode || opts?.level !== null) {
+    return router.replace('/(tabs)');
+  }
+  return router.replace('/(tabs)');
+}
+
 export default function LoginScreen() {
   const router = useRouter();
 
@@ -40,20 +62,33 @@ export default function LoginScreen() {
     [email, pw, loading]
   );
 
-  const ensureUserProfile = async (uid: string, name?: string | null, mail?: string | null) => {
+  /** -------------------------------------------------------
+   *  Đảm bảo hồ sơ users/{uid} tồn tại
+   *  - Mặc định role='user'
+   *  - Bạn có thể mở rộng thêm level/startMode nếu muốn
+   *  -------------------------------------------------------
+   */
+  const ensureUserProfile = async (
+    uid: string,
+    name?: string | null,
+    mail?: string | null
+  ) => {
     const uRef = doc(db, 'users', uid);
     const snap = await getDoc(uRef);
+
     if (!snap.exists()) {
       await setDoc(uRef, {
         uid,
         name: name ?? '',
         email: mail ?? '',
-        role: 'user',
+        role: 'user',                 // mặc định user
+        level: null,                  // tạm null để dẫn qua onboarding lần đầu
+        startMode: null,              // tạm null để dẫn qua onboarding lần đầu
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } else {
-      // có thể cập nhật updatedAt khi login
+      // cập nhật mốc đăng nhập gần nhất
       await setDoc(
         uRef,
         { updatedAt: serverTimestamp() },
@@ -62,6 +97,11 @@ export default function LoginScreen() {
     }
   };
 
+  /** -------------------------------------------------------
+   *  Đăng nhập Email/Password
+   *  - Lấy role/level/startMode để điều hướng
+   *  -------------------------------------------------------
+   */
   const onLogin = async () => {
     if (!canSubmit) {
       Alert.alert('Thiếu/Chưa hợp lệ', 'Vui lòng nhập email và mật khẩu hợp lệ.');
@@ -71,16 +111,34 @@ export default function LoginScreen() {
       setLoading(true);
       const cred = await signInWithEmailAndPassword(auth, email.trim(), pw);
       const user = cred.user;
+
+      // Đảm bảo có hồ sơ & giá trị mặc định
       await ensureUserProfile(user.uid, user.displayName, user.email);
+
+      // Đọc lại hồ sơ để lấy role/level/startMode mới nhất
+      const uSnap = await getDoc(doc(db, 'users', user.uid));
+      if (!uSnap.exists()) {
+        Alert.alert('Lỗi', 'Không tìm thấy dữ liệu người dùng.');
+        return;
+      }
+      const data = uSnap.data() || {};
+      const role: AppRole = (data.role as AppRole) || 'user';
+      const level = (data.level as number | null) ?? null;
+      const startMode = (data.startMode as string | null) ?? null;
+
       Alert.alert('Thành công', 'Đăng nhập thành công!');
-      router.replace('/(tabs)'); // đổi route home theo app của bạn
+      routeByRole(router, role, { level, startMode });
     } catch (e: any) {
-      Alert.alert('Đăng nhập lỗi', e?.message ?? 'Không rõ nguyên nhân');
+      Alert.alert('Đăng nhập lỗi', e?.code ? mapAuthError(e.code) : (e?.message ?? 'Không rõ nguyên nhân'));
     } finally {
       setLoading(false);
     }
   };
 
+  /** -------------------------------------------------------
+   *  Quên mật khẩu
+   *  -------------------------------------------------------
+   */
   const onForgot = async () => {
     if (!/\S+@\S+\.\S+/.test(email)) {
       Alert.alert('Email chưa hợp lệ', 'Nhập email để nhận liên kết đặt lại mật khẩu.');
@@ -97,7 +155,11 @@ export default function LoginScreen() {
     }
   };
 
-  // (Tuỳ chọn) nếu sau này bạn gắn Google OAuth với expo-auth-session
+  /** -------------------------------------------------------
+   *  (Tuỳ chọn) Đăng nhập Google sau này
+   *  - Sau khi lấy được cred, nhớ: ensureUserProfile -> đọc users -> routeByRole
+   *  -------------------------------------------------------
+   */
   const onLoginWithGoogle = async () => {
     Alert.alert('Google', 'Gắn logic đăng nhập Google ở đây (expo-auth-session).');
     // ví dụ:
@@ -105,8 +167,11 @@ export default function LoginScreen() {
     // if (type === 'success' && params?.id_token) {
     //   const credential = GoogleAuthProvider.credential(params.id_token);
     //   const cred = await signInWithCredential(auth, credential);
-    //   await ensureUserProfile(cred.user.uid, cred.user.displayName, cred.user.email);
-    //   router.replace('/');
+    //   const u = cred.user;
+    //   await ensureUserProfile(u.uid, u.displayName, u.email);
+    //   const uSnap = await getDoc(doc(db, 'users', u.uid));
+    //   const data = uSnap.data() || {};
+    //   routeByRole(router, data.role, { level: data.level ?? null, startMode: data.startMode ?? null });
     // }
   };
 
@@ -294,4 +359,22 @@ export default function LoginScreen() {
       </KeyboardAvoidingView>
     </LinearGradient>
   );
+}
+
+/** Map mã lỗi Firebase Auth -> thông điệp tiếng Việt gọn gàng */
+function mapAuthError(code?: string) {
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'Email không hợp lệ.';
+    case 'auth/user-not-found':
+      return 'Tài khoản không tồn tại.';
+    case 'auth/wrong-password':
+      return 'Sai mật khẩu.';
+    case 'auth/too-many-requests':
+      return 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau.';
+    case 'auth/user-disabled':
+      return 'Tài khoản đã bị vô hiệu hoá.';
+    default:
+      return 'Đăng nhập thất bại.';
+  }
 }
