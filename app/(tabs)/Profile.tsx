@@ -315,7 +315,7 @@ export default function ProfileScreen() {
 
             <TouchableOpacity
               style={styles.editBtn}
-              onPress={() => router.push('/profile/EditProfile')}
+              onPress={() => router.push('/(EditProfile)/edit')}
             >
               <Ionicons name="create-outline" size={18} color="#111827" />
               <Text style={styles.editTxt}>{t(language, 'edit')}</Text>
