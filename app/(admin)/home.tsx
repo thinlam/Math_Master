@@ -5,24 +5,24 @@ import { db } from '@/scripts/firebase';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import {
-    collection,
-    getCountFromServer,
-    getDocs,
-    limit,
-    orderBy,
-    query,
-    Timestamp,
+  collection,
+  getCountFromServer,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  Timestamp,
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Alert,
-    FlatList,
-    Platform,
-    RefreshControl,
-    StatusBar,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  FlatList,
+  Platform,
+  RefreshControl,
+  StatusBar,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -43,10 +43,32 @@ type RecentItem = {
   id: string;
   title: string;
   subtitle?: string;
-  createdAt?: Timestamp | null;
+  /** có thể là Timestamp | Date | string | null (khi serverTimestamp chưa resolve) */
+  createdAt?: any;
   type: 'user' | 'lesson' | 'report';
   role?: 'admin' | 'premium' | 'user' | string;
 };
+
+/* ---------- Utils: chuẩn hoá ngày ---------- */
+function safeDate(ts: any): Date | null {
+  if (!ts) return null;
+  if (ts instanceof Timestamp) return ts.toDate();
+  if (ts instanceof Date) return ts;
+  if (typeof ts === 'string') {
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // FieldValue (serverTimestamp) hoặc kiểu lạ -> bỏ qua
+  return null;
+}
+
+function formatDate(tsLike: any) {
+  const d = safeDate(tsLike);
+  if (!d) return '—';
+  const dd = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  const hh = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${hh} • ${dd}`;
+}
 
 /* ---------- Main Component ---------- */
 export default function AdminHome() {
@@ -100,7 +122,7 @@ export default function AdminHome() {
             id: d.id,
             title: (data.name as string) || (data.email as string) || d.id,
             subtitle: data.email ?? undefined,
-            createdAt: (data.createdAt as Timestamp) ?? null,
+            createdAt: data.createdAt ?? null, // có thể là FieldValue -> để any, formatDate sẽ an toàn
             type: 'user',
             role: (data.role as RecentItem['role']) || 'user',
           } satisfies RecentItem;
@@ -114,7 +136,7 @@ export default function AdminHome() {
             id: d.id,
             title: (data.title as string) || d.id,
             subtitle: data.grade ? `Lớp ${data.grade}` : undefined,
-            createdAt: (data.createdAt as Timestamp) ?? null,
+            createdAt: data.createdAt ?? null,
             type: 'lesson',
           } satisfies RecentItem;
         })
@@ -127,7 +149,7 @@ export default function AdminHome() {
             id: d.id,
             title: (data.title as string) || `Report #${d.id.slice(0, 6)}`,
             subtitle: data.reason ?? data.status ?? undefined,
-            createdAt: (data.createdAt as Timestamp) ?? null,
+            createdAt: data.createdAt ?? null,
             type: 'report',
           } satisfies RecentItem;
         })
@@ -272,13 +294,15 @@ export default function AdminHome() {
                 <QuickAction icon="stats-chart-outline" label="Phân tích" onPress={() => go(router, 'analytics')} />
                 <QuickAction icon="megaphone-outline" label="Thông báo" onPress={() => go(router, 'announcements')} />
                 <QuickAction icon="settings-outline" label="Cấu hình" onPress={() => go(router, 'admin-config')} />
+                <QuickAction icon="library-outline" label="Quản lý Library" onPress={() => go(router, 'library')} />
+
               </View>
             </View>
 
-            {/* ---------- Recent Lists (render thường, không FlatList con) ---------- */}
-            <Section title="Người dùng mới" actionLabel="Xem tất cả" onAction={() => go(router, 'users')}>
+            {/* ---------- Recent Lists ---------- */}
+            {/* <Section title="Người dùng mới" actionLabel="Xem tất cả" onAction={() => go(router, 'users')}>
               <RecentListSimple data={recentUsers} empty="Chưa có dữ liệu." />
-            </Section>
+            </Section> */}
 
             <Section title="Bài học mới" actionLabel="Xem tất cả" onAction={() => go(router, 'lessons')}>
               <RecentListSimple data={recentLessons} empty="Chưa có dữ liệu." />
@@ -292,7 +316,6 @@ export default function AdminHome() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />
         }
-        // Styling của FlatList cha
         contentContainerStyle={{ paddingBottom: 16 + insets.bottom }}
       />
 
@@ -329,7 +352,7 @@ export default function AdminHome() {
 /* ---------- Sub Components ---------- */
 function go(
   router: ReturnType<typeof useRouter>,
-  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config'
+  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config'| 'library'
 ) {
   switch (dest) {
     case 'users': router.push('../users'); break;
@@ -339,6 +362,7 @@ function go(
     case 'announcements': router.push('./announcements'); break;
     case 'settings': router.push('/(admin)/settings'); break;
     case 'admin-config': router.push('/(admin)/admin-config'); break;
+    case 'library': router.push('/(admin)/library/index'); break;
   }
 }
 
@@ -428,9 +452,9 @@ function RecentListSimple({ data, empty }: { data: RecentItem[]; empty: string }
               {item.type === 'user' && <RoleBadge role={(item.role as any) ?? 'user'} />}
             </View>
             {!!item.subtitle && <Text style={{ color: '#94a3b8', marginTop: 2 }}>{item.subtitle}</Text>}
-            {!!item.createdAt && (
-              <Text style={{ color: '#64748b', marginTop: 4, fontSize: 12 }}>{formatDate(item.createdAt!)}</Text>
-            )}
+            <Text style={{ color: '#64748b', marginTop: 4, fontSize: 12 }}>
+              {formatDate(item.createdAt)}
+            </Text>
           </View>
           {idx < data.length - 1 && <View style={{ height: 8 }} />}
         </View>
@@ -455,12 +479,4 @@ function RoleBadge({ role }: { role: string }) {
       <Text style={{ color: style.color, fontWeight: '700', fontSize: 12 }}>{style.label}</Text>
     </View>
   );
-}
-
-/* ---------- Utils ---------- */
-function formatDate(ts: Timestamp) {
-  const d = ts.toDate();
-  const dd = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-  const hh = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  return `${hh} • ${dd}`;
 }

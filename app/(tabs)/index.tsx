@@ -1,4 +1,6 @@
+// app/(tabs)/index.tsx hoặc app/(tabs)/home.tsx
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -46,32 +48,10 @@ const I18N = {
     cancel: 'Hủy',
     loading: 'Đang tải...',
   },
-  en: {
-    hello: 'Hello',
-    noClass: 'No class selected',
-    chooseClass: 'Choose class',
-    changeClass: 'Change class',
-    yourClass: 'Your class',
-    quickActions: 'Quick actions',
-    startLearning: 'Start learning',
-    practice: 'Practice',
-    challenge: 'Challenge',
-    stats: 'Stats',
-    points: 'Points',
-    badges: 'Badges',
-    streak: 'Streak',
-    days: 'days',
-    selectTitle: 'Select your class',
-    saving: 'Saving...',
-    save: 'Save',
-    cancel: 'Cancel',
-    loading: 'Loading...',
-  },
 } as const;
 
-type Lang = 'vi' | 'en';
-const LANG: Lang = 'vi'; // có thể đọc từ AsyncStorage nếu muốn
-
+type Lang = 'vi';
+const LANG: Lang = 'vi';
 function t(key: keyof typeof I18N['vi']) {
   return I18N[LANG][key];
 }
@@ -84,7 +64,7 @@ type UserProfile = {
   uid: string;
   name: string;
   email: string;
-  level: string | null; // cho phép null nếu chưa chọn lớp
+  level: string | null; // chuỗi: "Lớp 1"
   points: number;
   badges: BadgeItem[];
   streak: number;
@@ -101,6 +81,16 @@ const CLASS_OPTIONS = [
 ];
 
 /* ===========================
+   Helper: chuyển “Lớp X” -> number
+   =========================== */
+function classToGradeNumber(levelStr: string): number | null {
+  const m = levelStr.match(/\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return n >= 1 && n <= 12 ? n : null;
+}
+
+/* ===========================
    Home Screen
    =========================== */
 export default function HomeScreen() {
@@ -111,7 +101,6 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Modal chọn lớp
   const [classModalVisible, setClassModalVisible] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [savingClass, setSavingClass] = useState(false);
@@ -120,9 +109,7 @@ export default function HomeScreen() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
-      if (!u) {
-        router.replace('/(auth)/login');
-      }
+      if (!u) router.replace('/(auth)/login');
     });
     return unsub;
   }, [router]);
@@ -146,7 +133,7 @@ export default function HomeScreen() {
           badges: Array.isArray(data.badges) ? data.badges : [],
         };
         setUser(profile);
-        setSelectedClass(profile.level); // sync modal selection
+        setSelectedClass(profile.level);
       } finally {
         setLoading(false);
       }
@@ -176,6 +163,7 @@ export default function HomeScreen() {
   const openClassModal = () => setClassModalVisible(true);
   const closeClassModal = () => setClassModalVisible(false);
 
+  // Lưu lớp mới
   const saveClass = async () => {
     if (!firebaseUser) return;
     if (!selectedClass) {
@@ -186,7 +174,17 @@ export default function HomeScreen() {
       setSavingClass(true);
       await updateDoc(doc(db, 'users', firebaseUser.uid), { level: selectedClass });
       setUser((prev) => (prev ? { ...prev, level: selectedClass } : prev));
+
+      // sync sang AsyncStorage cho màn Learn
+      const g = classToGradeNumber(selectedClass);
+      if (g) {
+        await AsyncStorage.setItem('selectedGrade', String(g));
+      }
+
       closeClassModal();
+
+      // điều hướng sang Learn luôn
+      router.push('/');
     } catch (e) {
       console.error(e);
       Alert.alert('Lỗi', 'Không thể lưu lớp. Vui lòng thử lại.');
@@ -194,6 +192,16 @@ export default function HomeScreen() {
       setSavingClass(false);
     }
   };
+
+  // nút "Bắt đầu học"
+  const handleStartLearning = useCallback(async () => {
+    const levelStr = user?.level ?? selectedClass;
+    const g = levelStr ? classToGradeNumber(levelStr) : null;
+    if (g) {
+      await AsyncStorage.setItem('selectedGrade', String(g));
+    }
+    router.push('/Learnning/Learn');
+  }, [router, user?.level, selectedClass]);
 
   /* ---------- Loading ---------- */
   if (!firebaseUser || loading) {
@@ -216,7 +224,7 @@ export default function HomeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />
         }
       >
-        {/* Header: chào + avatar */}
+        {/* Header */}
         <View style={styles.headerCard}>
           <View style={styles.row}>
             <View style={styles.avatar}>
@@ -227,7 +235,6 @@ export default function HomeScreen() {
                 {t('hello')}, {user?.name || 'User'} 👋
               </Text>
 
-              {/* Lớp hiện tại + nút đổi/chọn lớp */}
               <View style={styles.levelRow}>
                 <View
                   style={[
@@ -236,9 +243,7 @@ export default function HomeScreen() {
                   ]}
                 >
                   <Ionicons name="school-outline" size={16} color="#4F46E5" />
-                  <Text style={styles.levelTxt}>
-                    {user?.level || t('noClass')}
-                  </Text>
+                  <Text style={styles.levelTxt}>{user?.level || t('noClass')}</Text>
                 </View>
 
                 <TouchableOpacity style={styles.changeBtn} onPress={openClassModal}>
@@ -252,57 +257,25 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Thao tác nhanh */}
+        {/* Quick Actions */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('quickActions')}</Text>
           <View style={styles.quickRow}>
-            <QuickButton
-              icon="rocket-outline"
-              label={t('startLearning')}
-              onPress={() => router.push('/Learnning/Learn')}
-            />
-            <QuickButton
-              icon="create-outline"
-              label={t('practice')}
-              onPress={() => router.push('/practice')}
-            />
-            <QuickButton
-              icon="flash-outline"
-              label={t('challenge')}
-              onPress={() => router.push('/challenge')}
-            />
+            <QuickButton icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
+            <QuickButton icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
+            <QuickButton icon="flash-outline" label={t('challenge')} onPress={() => router.push('/challenge')} />
           </View>
         </View>
 
-        {/* Thống kê */}
+        {/* Stats */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('stats')}</Text>
           <View style={styles.statsRow}>
-            <StatCard
-              icon="diamond-stone"
-              color="#9333EA"
-              label={t('points')}
-              value={String(user?.points ?? 0)}
-            />
-            <StatCard
-              icon="medal-outline"
-              color="#F59E0B"
-              label={t('badges')}
-              value={String(user?.badges?.length ?? 0)}
-            />
-            <StatCard
-              icon="fire"
-              color="#EF4444"
-              label={t('streak')}
-              value={`${user?.streak ?? 0} ${t('days')}`}
-            />
+            <StatCard icon="diamond-stone" color="#9333EA" label={t('points')} value={String(user?.points ?? 0)} />
+            <StatCard icon="medal-outline" color="#F59E0B" label={t('badges')} value={String(user?.badges?.length ?? 0)} />
+            <StatCard icon="fire" color="#EF4444" label={t('streak')} value={`${user?.streak ?? 0} ${t('days')}`} />
           </View>
         </View>
-
-        {/* Gợi ý/khóa học… (tuỳ mở rộng) */}
-        {/* <View style={styles.card}>...</View> */}
-
-        <View style={{ height: 24 }} />
       </ScrollView>
 
       {/* Modal chọn lớp */}
@@ -310,7 +283,6 @@ export default function HomeScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('selectTitle')}</Text>
-
             <View style={styles.grid}>
               {CLASS_OPTIONS.map((cls) => {
                 const active = selectedClass === cls;
@@ -349,16 +321,7 @@ export default function HomeScreen() {
 }
 
 /* ---------- Sub Components ---------- */
-
-function QuickButton({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: any;
-  label: string;
-  onPress?: () => void;
-}) {
+function QuickButton({ icon, label, onPress }: { icon: any; label: string; onPress?: () => void }) {
   return (
     <TouchableOpacity style={styles.quickBtn} onPress={onPress}>
       <Ionicons name={icon} size={18} color="#111827" />
@@ -367,17 +330,7 @@ function QuickButton({
   );
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  color,
-}: {
-  icon: any;
-  label: string;
-  value: string;
-  color: string;
-}) {
+function StatCard({ icon, label, value, color }: { icon: any; label: string; value: string; color: string }) {
   return (
     <View style={styles.statCard}>
       <View style={[styles.statIconWrap, { backgroundColor: `${color}22` }]}>
@@ -390,128 +343,41 @@ function StatCard({
 }
 
 /* ---------- Styles ---------- */
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0B1220' },
   scroll: { padding: 16, gap: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   loadingTxt: { color: '#CBD5E1' },
-
-  headerCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-  },
+  headerCard: { backgroundColor: '#0F172A', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#1F2A44' },
   row: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-  avatar: {
-    width: 60, height: 60, borderRadius: 999,
-    backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center',
-  },
+  avatar: { width: 60, height: 60, borderRadius: 999, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center' },
   avatarTxt: { color: '#0EA5E9', fontSize: 20, fontWeight: '700' },
   hello: { fontSize: 18, fontWeight: '700', color: '#E5E7EB' },
-
   levelRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  levelPill: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-  },
+  levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#111827', borderWidth: 1, borderColor: '#1F2A44' },
   levelTxt: { color: '#CBD5E1', fontSize: 12, fontWeight: '600' },
-
-  changeBtn: {
-    flexDirection: 'row',
-    gap: 6,
-    backgroundColor: '#93C5FD',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
+  changeBtn: { flexDirection: 'row', gap: 6, backgroundColor: '#93C5FD', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
   changeTxt: { color: '#111827', fontWeight: '700' },
-
-  card: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-  },
+  card: { backgroundColor: '#0F172A', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#1F2A44' },
   cardTitle: { color: '#E5E7EB', fontSize: 16, fontWeight: '700', marginBottom: 10 },
-
   quickRow: { flexDirection: 'row', gap: 10 },
-  quickBtn: {
-    flex: 1,
-    backgroundColor: '#93C5FD',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    gap: 6,
-  },
+  quickBtn: { flex: 1, backgroundColor: '#93C5FD', paddingVertical: 12, borderRadius: 12, alignItems: 'center', gap: 6 },
   quickTxt: { color: '#111827', fontWeight: '700' },
-
   statsRow: { flexDirection: 'row', gap: 12 },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-    alignItems: 'flex-start',
-    gap: 6,
-  },
+  statCard: { flex: 1, backgroundColor: '#0F172A', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#1F2A44', alignItems: 'flex-start', gap: 6 },
   statIconWrap: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
   statValue: { color: '#F8FAFC', fontSize: 18, fontWeight: '700' },
   statLabel: { color: '#94A3B8', fontSize: 12 },
-
-  // Modal
-  modalOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)',
-    alignItems: 'center', justifyContent: 'center', padding: 16,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-    padding: 14,
-  },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  modalCard: { width: '100%', backgroundColor: '#0F172A', borderRadius: 16, borderWidth: 1, borderColor: '#1F2A44', padding: 14 },
   modalTitle: { color: '#E5E7EB', fontWeight: '700', fontSize: 16, marginBottom: 10 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  classItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-    backgroundColor: '#0B1220',
-  },
+  classItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#1F2A44', backgroundColor: '#0B1220' },
   classItemActive: { borderColor: '#10B98155', backgroundColor: '#0B1A14' },
   classTxt: { color: '#CBD5E1', fontWeight: '600' },
   classTxtActive: { color: '#D1FAE5' },
-
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 14, justifyContent: 'flex-end' },
-  modalBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-    backgroundColor: '#0B1220',
-  },
-  cancelBtn: {},
+  modalBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#1F2A44', backgroundColor: '#0B1220' },
   saveBtn: { backgroundColor: '#93C5FD', borderColor: '#93C5FD' },
   modalBtnTxt: { color: '#E5E7EB', fontWeight: '600' },
 });

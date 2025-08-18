@@ -2,7 +2,7 @@
 import { getApps, initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-
+import { getStorage } from "firebase/storage";
 // TODO: thay bằng config của bạn trong Firebase console
 const firebaseConfig = {
   apiKey: "AIzaSyDv1AQ1AJoc2sM8GCPvGV5qmNZ4b-TNC-w",
