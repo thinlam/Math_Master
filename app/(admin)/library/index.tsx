@@ -3,37 +3,43 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    RefreshControl,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-/* ---------- Firebase ---------- */
-import { db, storage } from '@/scripts/firebase';
+/* ---------- Firebase (Firestore only) ---------- */
+import { db } from '@/scripts/firebase';
 import {
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    limit,
-    orderBy,
-    query,
-    QueryDocumentSnapshot,
-    serverTimestamp,
-    setDoc,
-    startAfter,
-    updateDoc,
-    where
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  QueryDocumentSnapshot,
+  serverTimestamp,
+  setDoc,
+  startAfter,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+
+/* ---------- Cloudinary config ---------- */
+const CLOUD_NAME = 'djf9vnngm';
+const UPLOAD_PRESET = 'upload_pdf_unsigned';
+const CLOUD_FOLDER = 'library';
 
 /* ---------- Types ---------- */
 type LibraryItem = {
@@ -43,18 +49,12 @@ type LibraryItem = {
   grade: number; // 1..12
   type: 'pdf';
   tags?: string[];
-  url: string; // download url
+  url: string; // cloudinary secure_url
   updatedAt?: any; // Timestamp
 };
 
 const PAGE_SIZE = 20;
 const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
-
-/* ---------- Helpers ---------- */
-async function uriToBlob(uri: string): Promise<Blob> {
-  const res = await fetch(uri);
-  return await res.blob();
-}
 
 /* ---------- Main ---------- */
 export default function AdminLibraryScreen() {
@@ -73,19 +73,19 @@ export default function AdminLibraryScreen() {
   const [gradeFilter, setGradeFilter] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
 
-  /* Modal Add/Edit */
+  /* Modal Edit (chỉ còn dùng để sửa) */
   const [visible, setVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [fTitle, setFTitle] = useState('');
   const [fSubtitle, setFSubtitle] = useState('');
   const [fGrade, setFGrade] = useState<number>(1);
   const [fTags, setFTags] = useState<string>(''); // comma separated
-  const [fUrl, setFUrl] = useState<string>('');   // existing url (edit) or upload result
+  const [fUrl, setFUrl] = useState<string>('');   // cloudinary url
   const [uploading, setUploading] = useState(false);
 
   const colRef = useMemo(() => collection(db, 'library'), []);
 
-  /* Build Firestore query (server-side filter + sort) */
+  /* ---------- Build Firestore query ---------- */
   const buildQuery = useCallback(() => {
     const parts: any[] = [];
     if (gradeFilter) parts.push(where('grade', '==', gradeFilter));
@@ -103,7 +103,6 @@ export default function AdminLibraryScreen() {
       const snap = await getDocs(qRef);
       const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LibraryItem[];
 
-      // client-side search (title/subtitle/tags) – đơn giản
       const filtered = qText.trim()
         ? data.filter((it) => {
             const t = qText.trim().toLowerCase();
@@ -177,10 +176,11 @@ export default function AdminLibraryScreen() {
     setFUrl('');
   }, []);
 
+  // THAY ĐỔI: Add → điều hướng sang trang thêm mới
   const openAdd = useCallback(() => {
     resetForm();
-    setVisible(true);
-  }, [resetForm]);
+    router.push('/(admin)/library/add');
+  }, [resetForm, router]);
 
   const openEdit = useCallback((it: LibraryItem) => {
     setEditingId(it.id || null);
@@ -192,6 +192,7 @@ export default function AdminLibraryScreen() {
     setVisible(true);
   }, []);
 
+  /** Chọn và upload PDF lên Cloudinary (dùng trong Sửa) */
   const pickPdf = useCallback(async () => {
     const res = await DocumentPicker.getDocumentAsync({
       type: 'application/pdf',
@@ -204,25 +205,46 @@ export default function AdminLibraryScreen() {
 
     try {
       setUploading(true);
-      // tạo id tạm (nếu đang add mới)
-      const docId = editingId || doc(collection(db, 'tmp')).id; // fake to get id
-      const path = `library/${docId}.pdf`;
 
-      const blob = await uriToBlob(file.uri);
-      const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, blob, {
-        contentType: 'application/pdf',
-      });
-      const url = await getDownloadURL(storageRef);
+      const MAX_MB = 10;
+      if (file.size && file.size > MAX_MB * 1024 * 1024) {
+        Alert.alert('File quá lớn', `Giới hạn ${MAX_MB}MB.`);
+        return;
+      }
+
+      const rnFile = {
+        uri: file.uri,
+        name: file.name?.endsWith('.pdf') ? file.name : (file.name || `document-${Date.now()}.pdf`),
+        type: file.mimeType || 'application/pdf',
+      } as any;
+
+      const form = new FormData();
+      form.append('file', rnFile);
+      form.append('upload_preset', UPLOAD_PRESET);
+      form.append('folder', CLOUD_FOLDER);
+
+      const endpoint = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`;
+      const resp = await fetch(endpoint, { method: 'POST', body: form });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        console.log('Cloudinary status:', resp.status);
+        console.log('Cloudinary response:', text);
+        throw new Error(`Cloudinary upload failed: ${resp.status}`);
+      }
+
+      const json = await resp.json();
+      const url = json.secure_url as string;
+
       setFUrl(url);
-      Alert.alert('Thành công', 'Đã tải PDF lên Storage.');
-    } catch (e) {
+      Alert.alert('Thành công', 'Đã tải PDF lên Cloudinary.');
+    } catch (e: any) {
       console.warn('upload pdf error', e);
-      Alert.alert('Lỗi', 'Tải PDF thất bại.');
+      Alert.alert('Lỗi', e?.message ?? 'Tải PDF thất bại.');
     } finally {
       setUploading(false);
     }
-  }, [editingId]);
+  }, []);
 
   const handleSave = useCallback(async () => {
     if (!fTitle.trim()) {
@@ -253,7 +275,6 @@ export default function AdminLibraryScreen() {
         Alert.alert('Đã cập nhật', 'Tài liệu đã được cập nhật.');
       } else {
         const newRef = doc(collection(db, 'library'));
-        // Nếu đã upload PDF trước đó theo id tạm, có thể re-upload lại theo newRef.id. Để đơn giản, ta giữ URL hiện tại.
         await setDoc(newRef, payload as any);
         Alert.alert('Đã thêm', 'Tài liệu mới đã được thêm.');
       }
@@ -459,18 +480,21 @@ export default function AdminLibraryScreen() {
     );
   }, [insets.top, qText, gradeFilter, sortBy, openAdd]);
 
-  const ListEmpty = useCallback(() => (
-    <View style={{ alignItems: 'center', paddingTop: 48 }}>
-      {loading ? (
-        <ActivityIndicator />
-      ) : (
-        <>
-          <Ionicons name="book-outline" size={40} color="#9CA3AF" />
-          <Text style={{ color: '#6B7280', marginTop: 8 }}>Chưa có tài liệu</Text>
-        </>
-      )}
-    </View>
-  ), [loading]);
+  const ListEmpty = useCallback(
+    () => (
+      <View style={{ alignItems: 'center', paddingTop: 48 }}>
+        {loading ? (
+          <ActivityIndicator />
+        ) : (
+          <>
+            <Ionicons name="book-outline" size={40} color="#9CA3AF" />
+            <Text style={{ color: '#6B7280', marginTop: 8 }}>Chưa có tài liệu</Text>
+          </>
+        )}
+      </View>
+    ),
+    [loading]
+  );
 
   const ListFooter = useCallback(() => {
     if (loading && items.length === 0) return null;
@@ -498,165 +522,181 @@ export default function AdminLibraryScreen() {
         contentContainerStyle={{ paddingBottom: 24 }}
       />
 
-      {/* Modal Add/Edit */}
+      {/* Modal Edit only */}
       <Modal visible={visible} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-          <View
-            style={{
-              backgroundColor: '#fff',
-              borderTopLeftRadius: 16,
-              borderTopRightRadius: 16,
-              paddingBottom: 24,
-              maxHeight: '92%',
-            }}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
+            style={{ width: '100%' }}
           >
-            <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ fontSize: 18, fontWeight: '800', flex: 1 }}>
-                {editingId ? 'Sửa tài liệu' : 'Thêm tài liệu'}
-              </Text>
-              <TouchableOpacity onPress={() => { setVisible(false); resetForm(); }}>
-                <Ionicons name="close" size={22} color="#111827" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={{ paddingHorizontal: 16 }}>
-              {/* Title */}
-              <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tiêu đề *</Text>
-              <TextInput
-                value={fTitle}
-                onChangeText={setFTitle}
-                placeholder="VD: Đề ôn giữa kỳ Toán 3"
-                style={{
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  borderRadius: 10,
-                  paddingHorizontal: 12,
-                  height: 44,
-                  marginBottom: 12,
-                }}
-              />
-
-              {/* Subtitle */}
-              <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mô tả ngắn</Text>
-              <TextInput
-                value={fSubtitle}
-                onChangeText={setFSubtitle}
-                placeholder="Theo SGK Kết nối tri thức…"
-                style={{
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  borderRadius: 10,
-                  paddingHorizontal: 12,
-                  height: 44,
-                  marginBottom: 12,
-                }}
-              />
-
-              {/* Grade */}
-              <Text style={{ fontWeight: '700', marginBottom: 6 }}>Lớp *</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ marginBottom: 12 }}>
-                {GRADES.map((g) => {
-                  const active = fGrade === g;
-                  return (
-                    <TouchableOpacity
-                      key={g}
-                      onPress={() => setFGrade(g)}
-                      style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 999,
-                        marginRight: 8,
-                        backgroundColor: active ? '#4F46E5' : '#EEF2FF',
-                      }}
-                    >
-                      <Text style={{ color: active ? '#fff' : '#4F46E5', fontWeight: '700' }}>Lớp {g}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* Tags */}
-              <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tags (phân cách dấu phẩy)</Text>
-              <TextInput
-                value={fTags}
-                onChangeText={setFTags}
-                placeholder="ôn tập, giữa kỳ, toán"
-                style={{
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  borderRadius: 10,
-                  paddingHorizontal: 12,
-                  height: 44,
-                  marginBottom: 12,
-                }}
-              />
-
-              {/* PDF picker */}
-              <Text style={{ fontWeight: '700', marginBottom: 6 }}>File PDF *</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <View
+              style={{
+                backgroundColor: '#fff',
+                borderTopLeftRadius: 16,
+                borderTopRightRadius: 16,
+                paddingBottom: 24,
+                maxHeight: '92%',
+              }}
+            >
+              <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', flex: 1 }}>
+                  {editingId ? 'Sửa tài liệu' : 'Thêm tài liệu'}
+                </Text>
                 <TouchableOpacity
-                  onPress={pickPdf}
+                  onPress={() => {
+                    setVisible(false);
+                    resetForm();
+                  }}
+                >
+                  <Ionicons name="close" size={22} color="#111827" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                automaticallyAdjustKeyboardInsets
+                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 120 }}
+              >
+                {/* Title */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tiêu đề *</Text>
+                <TextInput
+                  value={fTitle}
+                  onChangeText={setFTitle}
+                  placeholder="VD: Đề ôn giữa kỳ Toán 3"
                   style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: '#111827',
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    borderRadius: 10,
                     paddingHorizontal: 12,
-                    paddingVertical: 10,
-                    borderRadius: 10,
+                    height: 44,
+                    marginBottom: 12,
                   }}
-                  disabled={uploading}
-                >
-                  {uploading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <MaterialCommunityIcons name="file-upload-outline" size={18} color="#fff" />
-                      <Text style={{ color: '#fff', marginLeft: 8, fontWeight: '700' }}>
-                        Chọn & Tải PDF
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                <View style={{ marginLeft: 12, flex: 1 }}>
-                  <Text numberOfLines={2} style={{ color: fUrl ? '#065F46' : '#6B7280' }}>
-                    {fUrl ? 'Đã có URL PDF' : 'Chưa chọn PDF'}
-                  </Text>
+                />
+
+                {/* Subtitle */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mô tả ngắn</Text>
+                <TextInput
+                  value={fSubtitle}
+                  onChangeText={setFSubtitle}
+                  placeholder="Theo SGK Kết nối tri thức…"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    height: 44,
+                    marginBottom: 12,
+                  }}
+                />
+
+                {/* Grade */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Lớp *</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ marginBottom: 12 }}>
+                  {GRADES.map((g) => {
+                    const active = fGrade === g;
+                    return (
+                      <TouchableOpacity
+                        key={g}
+                        onPress={() => setFGrade(g)}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 999,
+                          marginRight: 8,
+                          backgroundColor: active ? '#4F46E5' : '#EEF2FF',
+                        }}
+                      >
+                        <Text style={{ color: active ? '#fff' : '#4F46E5', fontWeight: '700' }}>Lớp {g}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Tags */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tags (phân cách dấu phẩy)</Text>
+                <TextInput
+                  value={fTags}
+                  onChangeText={setFTags}
+                  placeholder="ôn tập, giữa kỳ, toán"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    height: 44,
+                    marginBottom: 12,
+                  }}
+                />
+
+                {/* PDF picker */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>File PDF *</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <TouchableOpacity
+                    onPress={pickPdf}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#111827',
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                    }}
+                    disabled={uploading}
+                  >
+                    {uploading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <MaterialCommunityIcons name="file-upload-outline" size={18} color="#fff" />
+                        <Text style={{ color: '#fff', marginLeft: 8, fontWeight: '700' }}>Chọn & Tải PDF</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  <View style={{ marginLeft: 12, flex: 1 }}>
+                    <Text numberOfLines={2} style={{ color: fUrl ? '#065F46' : '#6B7280' }}>
+                      {fUrl ? 'Đã có URL PDF' : 'Chưa chọn PDF'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
 
-              {/* Actions */}
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
-                <TouchableOpacity
-                  onPress={() => { setVisible(false); resetForm(); }}
-                  style={{
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
-                    borderRadius: 10,
-                    backgroundColor: '#E5E7EB',
-                    marginRight: 10,
-                  }}
-                  disabled={uploading}
-                >
-                  <Text style={{ fontWeight: '700' }}>Huỷ</Text>
-                </TouchableOpacity>
+                {/* Actions */}
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setVisible(false);
+                      resetForm();
+                    }}
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      backgroundColor: '#E5E7EB',
+                      marginRight: 10,
+                    }}
+                    disabled={uploading}
+                  >
+                    <Text style={{ fontWeight: '700' }}>Huỷ</Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  onPress={handleSave}
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 10,
-                    borderRadius: 10,
-                    backgroundColor: '#4F46E5',
-                  }}
-                  disabled={uploading}
-                >
-                  <Text style={{ fontWeight: '700', color: '#fff' }}>
-                    {editingId ? 'Lưu thay đổi' : 'Thêm mới'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
+                  <TouchableOpacity
+                    onPress={handleSave}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      backgroundColor: '#4F46E5',
+                    }}
+                    disabled={uploading}
+                  >
+                    <Text style={{ fontWeight: '700', color: '#fff' }}>
+                      {editingId ? 'Lưu thay đổi' : 'Thêm mới'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </View>

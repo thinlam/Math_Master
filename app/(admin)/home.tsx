@@ -362,7 +362,7 @@ function go(
     case 'announcements': router.push('./announcements'); break;
     case 'settings': router.push('/(admin)/settings'); break;
     case 'admin-config': router.push('/(admin)/admin-config'); break;
-    case 'library': router.push('/(admin)/library/index'); break;
+    case 'library': router.push('/(admin)/library'); break;
   }
 }
 
