@@ -1,4 +1,3 @@
-// app/(tabs)/Profile.tsx
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -7,15 +6,16 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Linking,
+  Image,
   RefreshControl,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
 /* ===========================
@@ -26,7 +26,7 @@ import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
 /* ===========================
-   i18n: Từ điển & helper t()
+   i18n
    =========================== */
 const I18N = {
   vi: {
@@ -88,7 +88,6 @@ const I18N = {
     loggedOut: 'You have logged out.',
     noBadges: 'No badges yet — start learning to earn some!',
     demoEmail: 'user@example.com',
-    linkDemo: 'Demo feature.',
     loading: 'Loading...',
     errorLoad: 'Failed to load profile.',
     pullToRefresh: 'Pull to refresh',
@@ -108,7 +107,7 @@ type UserProfile = {
   uid: string;
   name: string;
   email: string;
-  level: string | null; // cho phép null nếu chưa chọn lớp
+  level: string | null;
   points: number;
   badges: BadgeItem[];
   streak: number;
@@ -123,6 +122,99 @@ const SETTINGS_KEYS = {
 };
 
 /* ===========================
+   THEME
+   =========================== */
+/** Giữ nguyên màu tối như UI hiện tại */
+const THEME = {
+  DARK: {
+    // surfaces
+    bg: '#0B1220',
+    card: '#0F172A',
+    cardBorder: '#1F2A44',
+    // text
+    text: '#E5E7EB',
+    textMuted: '#94A3B8',
+    textFaint: '#CBD5E1',
+    // brand & accents
+    brand: '#0EA5E9',
+    brandSoft: '#60A5FA',
+    pillBg: '#111827',
+    pillBorder: '#1F2A44',
+    link: '#60A5FA',
+    // controls
+    divider: '#132040',
+    danger: '#EF4444',
+    editBtnBg: '#93C5FD',
+    editBtnText: '#111827',
+    statIconBgAlpha: '22',
+    // icons
+    ionMain: '#4F46E5',
+    ionMuted: '#64748B',
+    mciGold: '#F59E0B',
+    streak: '#EF4444',
+  },
+  /** Giao diện sáng — nền trắng, chữ đen (hoặc nếu muốn “font trắng như trang đăng ký”
+   * bạn có thể đổi text thành trắng và bg thành màu đậm ở đây) */
+  LIGHT: {
+    bg: '#FFFFFF',
+    card: '#FFFFFF',
+    cardBorder: '#E5E7EB',
+    text: '#111827',
+    textMuted: '#4B5563',
+    textFaint: '#374151',
+    brand: '#2563EB',
+    brandSoft: '#2563EB',
+    pillBg: '#F3F4F6',
+    pillBorder: '#E5E7EB',
+    link: '#2563EB',
+    divider: '#E5E7EB',
+    danger: '#DC2626',
+    editBtnBg: '#2563EB',
+    editBtnText: '#FFFFFF',
+    statIconBgAlpha: '22',
+    ionMain: '#4F46E5',
+    ionMuted: '#9CA3AF',
+    mciGold: '#D97706',
+    streak: '#DC2626',
+  },
+} as const;
+
+type Palette = typeof THEME.DARK;
+
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: p.bg },
+    scroll: { padding: 16, gap: 12 },
+    card: { backgroundColor: p.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: p.cardBorder },
+    row: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+    avatar: { width: 60, height: 60, borderRadius: 999, backgroundColor: p.cardBorder, justifyContent: 'center', alignItems: 'center' },
+    avatarTxt: { color: p.brand, fontSize: 20, fontWeight: '700' },
+    name: { fontSize: 18, fontWeight: '700', color: p.text },
+    email: { fontSize: 13, color: p.textMuted, marginTop: 2 },
+    levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
+    levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
+    statsRow: { flexDirection: 'row', gap: 12 },
+    statCard: { flex: 1, backgroundColor: p.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: p.cardBorder, alignItems: 'flex-start', gap: 6 },
+    statIconWrap: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
+    statValue: { color: p.text, fontSize: 18, fontWeight: '700' },
+    statLabel: { color: p.textMuted, fontSize: 12 },
+    cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    cardTitle: { color: p.text, fontSize: 16, fontWeight: '700' },
+    link: { color: p.link, fontSize: 13, fontWeight: '600' },
+    badge: { width: 110, height: 78, borderRadius: 12, borderWidth: 1, borderColor: p.cardBorder, backgroundColor: p.bg, padding: 10, justifyContent: 'center', gap: 6 },
+    badgeTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
+    empty: { marginTop: 10, color: p.textMuted, fontSize: 13 },
+    settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: p.divider },
+    settingLabel: { flex: 1, color: p.brand, fontSize: 14, fontWeight: '600' },
+    pickerValue: { marginRight: 6, color: p.textMuted, fontSize: 13 },
+    logoutBtn: { marginTop: 6, backgroundColor: p.danger, borderRadius: 12, paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
+    logoutTxt: { color: '#fff', fontWeight: '700' },
+    editBtn: { flexDirection: 'row', gap: 6, backgroundColor: p.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+    editTxt: { color: p.editBtnText, fontWeight: '700' },
+  });
+}
+
+/* ===========================
    Component chính
    =========================== */
 export default function ProfileScreen() {
@@ -130,9 +222,12 @@ export default function ProfileScreen() {
 
   // --------- UI/Settings state ----------
   const [language, setLanguage] = useState<'vi' | 'en'>('vi');
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(true); // mặc định theo UI hiện tại
   const [notifStudy, setNotifStudy] = useState(true);
   const [notifMarketing, setNotifMarketing] = useState(false);
+
+  const palette = useMemo<Palette>(() => (darkMode ? THEME.DARK : THEME.LIGHT), [darkMode]);
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   // --------- User/Auth state ----------
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -182,8 +277,8 @@ export default function ProfileScreen() {
           uid: u.uid,
           name: u.displayName || data.name || t(language, 'user'),
           email: u.email || data.email || t(language, 'demoEmail'),
-          photoURL: u.photoURL || data.photoURL || null,
-          level: data.level ?? null, // chỉ có khi user đã chọn
+          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
+          level: data.level ?? null,
           points: typeof data.points === 'number' ? data.points : 0,
           streak: typeof data.streak === 'number' ? data.streak : 0,
           badges: Array.isArray(data.badges) ? data.badges : [],
@@ -199,7 +294,6 @@ export default function ProfileScreen() {
     [language]
   );
 
-  // --------- Tải khi có firebaseUser hoặc khi focus tab ----------
   useEffect(() => {
     if (firebaseUser) fetchProfile(firebaseUser);
   }, [firebaseUser, fetchProfile]);
@@ -250,10 +344,11 @@ export default function ProfileScreen() {
   // --------- UI: Loading / Error ----------
   if (!firebaseUser || loading) {
     return (
-      <SafeAreaView style={[styles.container, darkMode && { backgroundColor: '#0B1020' }]}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size="large" />
-          <Text style={{ color: '#CBD5E1' }}>{t(language, 'loading')}</Text>
+          <Text style={{ color: palette.textMuted }}>{t(language, 'loading')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -261,14 +356,15 @@ export default function ProfileScreen() {
 
   if (error || !user) {
     return (
-      <SafeAreaView style={[styles.container, darkMode && { backgroundColor: '#0B1020' }]}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-          <Text style={{ color: '#FCA5A5' }}>{error || t(language, 'errorLoad')}</Text>
+          <Text style={{ color: palette.danger }}>{error || t(language, 'errorLoad')}</Text>
           <TouchableOpacity
-            style={[styles.editBtn, { backgroundColor: '#60A5FA' }]}
+            style={[styles.editBtn, { backgroundColor: palette.brandSoft }]}
             onPress={() => firebaseUser && fetchProfile(firebaseUser)}
           >
-            <Ionicons name="refresh" size={18} color="#111827" />
+            <Ionicons name="refresh" size={18} color={palette.editBtnText} />
             <Text style={styles.editTxt}>{t(language, 'pullToRefresh')}</Text>
           </TouchableOpacity>
         </View>
@@ -277,30 +373,37 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, darkMode && { backgroundColor: '#0B1020' }]}>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />
         }
       >
         {/* Header: Avatar + Tên + Email */}
-        <View style={[styles.card, darkMode && styles.cardDark]}>
+        <View style={styles.card}>
           <View style={styles.row}>
-            <View style={[styles.avatar, darkMode && styles.avatarDark]}>
-              {/* Nếu có URL ảnh thật, có thể dùng <Image source={{ uri: user.photoURL! }} style={{ width: 60, height: 60, borderRadius: 999 }} /> */}
-              <Text style={[styles.avatarTxt, darkMode && { color: '#E5E7EB' }]}>{initials}</Text>
-            </View>
+            {user.photoURL ? (
+              <Image
+                source={{ uri: user.photoURL }}
+                style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarTxt}>{initials}</Text>
+              </View>
+            )}
 
             <View style={{ flex: 1 }}>
-              <Text style={[styles.name, darkMode && { color: '#F8FAFC' }]} numberOfLines={1}>
+              <Text style={styles.name} numberOfLines={1}>
                 {user.name}
               </Text>
-              <Text style={[styles.email, darkMode && { color: '#94A3B8' }]} numberOfLines={1}>
+              <Text style={styles.email} numberOfLines={1}>
                 {user.email}
               </Text>
 
-              {/* Lớp: nếu chưa chọn -> hiển thị "Chưa chọn lớp" (không có nút) */}
               <View
                 style={[
                   styles.levelPill,
@@ -308,56 +411,49 @@ export default function ProfileScreen() {
                   !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' },
                 ]}
               >
-                <Ionicons name="school-outline" size={16} color="#4F46E5" />
+                <Ionicons name="school-outline" size={16} color={THEME.DARK.ionMain} />
                 <Text style={styles.levelTxt}>{user.level || t(language, 'noClass')}</Text>
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.editBtn}
-              onPress={() => router.push('/(EditProfile)/edit')}
-            >
-              <Ionicons name="create-outline" size={18} color="#111827" />
+            <TouchableOpacity style={styles.editBtn} onPress={() => router.push('/(EditProfile)/edit')}>
+              <Ionicons name="create-outline" size={18} color={palette.editBtnText} />
               <Text style={styles.editTxt}>{t(language, 'edit')}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Stats: Points / Badges / Streak */}
+        {/* Stats */}
         <View style={styles.statsRow}>
           <StatCard
             icon="diamond-stone"
             color="#9333EA"
             label={t(language, 'points')}
             value={String(user.points)}
-            dark={darkMode}
+            palette={palette}
           />
           <StatCard
             icon="medal-outline"
-            color="#F59E0B"
+            color={palette.mciGold}
             label={t(language, 'badges')}
             value={String(user.badges?.length || 0)}
-            dark={darkMode}
+            palette={palette}
           />
           <StatCard
             icon="fire"
-            color="#EF4444"
+            color={palette.streak}
             label={t(language, 'streak')}
             value={`${user.streak} ${t(language, 'days')}`}
-            dark={darkMode}
+            palette={palette}
           />
         </View>
 
         {/* Badges */}
-        <View style={[styles.card, darkMode && styles.cardDark]}>
+        <View style={styles.card}>
           <View style={styles.cardHead}>
-            <Text style={[styles.cardTitle, darkMode && { color: '#F8FAFC' }]}>
-              {t(language, 'earnedBadges')}
-            </Text>
+            <Text style={styles.cardTitle}>{t(language, 'earnedBadges')}</Text>
             <TouchableOpacity onPress={() => router.push('/profile/Badges')}>
-              <Text style={[styles.link, darkMode && { color: '#93C5FD' }]}>
-                {t(language, 'viewAll')}
-              </Text>
+              <Text style={styles.link}>{t(language, 'viewAll')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -369,48 +465,46 @@ export default function ProfileScreen() {
               contentContainerStyle={{ gap: 12 }}
               keyExtractor={(b) => b.id}
               renderItem={({ item }) => (
-                <View style={[styles.badge, darkMode && styles.badgeDark]}>
-                  <MaterialCommunityIcons name={item.icon as any} size={22} color="#F59E0B" />
-                  <Text style={[styles.badgeTxt, darkMode && { color: '#E5E7EB' }]} numberOfLines={1}>
+                <View style={styles.badge}>
+                  <MaterialCommunityIcons name={item.icon as any} size={22} color={palette.mciGold} />
+                  <Text style={styles.badgeTxt} numberOfLines={1}>
                     {item.title}
                   </Text>
                 </View>
               )}
             />
           ) : (
-            <Text style={[styles.empty, darkMode && { color: '#94A3B8' }]}>
-              {t(language, 'noBadges')}
-            </Text>
+            <Text style={styles.empty}>{t(language, 'noBadges')}</Text>
           )}
         </View>
 
         {/* Account Settings */}
-        <Section title={t(language, 'account')} dark={darkMode}>
+        <Section title={t(language, 'account')} palette={palette}>
           <SettingItem
             icon="key-outline"
             label={t(language, 'changePassword')}
             onPress={() => router.push('/profile/ChangePassword')}
-            dark={darkMode}
+            palette={palette}
           />
           <SettingItem
             icon="logo-google"
             label={t(language, 'linkGoogle')}
             onPress={() => Alert.alert(t(language, 'linkGoogle'), t(language, 'linkDemo'))}
-            dark={darkMode}
+            palette={palette}
           />
         </Section>
 
         {/* App Settings */}
-        <Section title={t(language, 'appSettings')} dark={darkMode}>
+        <Section title={t(language, 'appSettings')} palette={palette}>
           <SettingSwitch
             icon="moon-outline"
             label={t(language, 'darkMode')}
             value={darkMode}
-            onValueChange={(v) => {
+            onValueChange={async (v) => {
               setDarkMode(v);
-              persist(SETTINGS_KEYS.darkMode, v);
+              await persist(SETTINGS_KEYS.darkMode, v);
             }}
-            dark={darkMode}
+            palette={palette}
           />
           <SettingPicker
             icon="language-outline"
@@ -422,12 +516,12 @@ export default function ProfileScreen() {
               await persist(SETTINGS_KEYS.language, next);
               if (firebaseUser) fetchProfile(firebaseUser);
             }}
-            dark={darkMode}
+            palette={palette}
           />
         </Section>
 
         {/* Notifications */}
-        <Section title={t(language, 'notifications')} dark={darkMode}>
+        <Section title={t(language, 'notifications')} palette={palette}>
           <SettingSwitch
             icon="notifications-outline"
             label={t(language, 'notifStudy')}
@@ -436,7 +530,7 @@ export default function ProfileScreen() {
               setNotifStudy(v);
               persist(SETTINGS_KEYS.notifStudy, v);
             }}
-            dark={darkMode}
+            palette={palette}
           />
           <SettingSwitch
             icon="megaphone-outline"
@@ -446,23 +540,7 @@ export default function ProfileScreen() {
               setNotifMarketing(v);
               persist(SETTINGS_KEYS.notifMarketing, v);
             }}
-            dark={darkMode}
-          />
-        </Section>
-
-        {/* Legal / Support */}
-        <Section title={t(language, 'supportLegal')} dark={darkMode}>
-          <SettingItem
-            icon="help-circle-outline"
-            label={t(language, 'helpCenter')}
-            onPress={() => Linking.openURL('https://example.com/help')}
-            dark={darkMode}
-          />
-          <SettingItem
-            icon="document-text-outline"
-            label={t(language, 'terms')}
-            onPress={() => Linking.openURL('https://example.com/terms')}
-            dark={darkMode}
+            palette={palette}
           />
         </Section>
 
@@ -485,21 +563,24 @@ function StatCard({
   label,
   value,
   color,
-  dark,
+  palette,
 }: {
   icon: any;
   label: string;
   value: string;
   color: string;
-  dark?: boolean;
+  palette: Palette;
 }) {
   return (
-    <View style={[styles.statCard, dark && styles.statCardDark]}>
-      <View style={[styles.statIconWrap, { backgroundColor: `${color}22` }]}>
+    <View style={{
+      flex: 1, backgroundColor: palette.card, borderRadius: 14, padding: 12,
+      borderWidth: 1, borderColor: palette.cardBorder, alignItems: 'flex-start', gap: 6
+    }}>
+      <View style={{ borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: `${color}${palette.statIconBgAlpha}` }}>
         <MaterialCommunityIcons name={icon} size={18} color={color} />
       </View>
-      <Text style={[styles.statValue, dark && { color: '#F8FAFC' }]}>{value}</Text>
-      <Text style={[styles.statLabel, dark && { color: '#94A3B8' }]}>{label}</Text>
+      <Text style={{ color: palette.text, fontSize: 18, fontWeight: '700' }}>{value}</Text>
+      <Text style={{ color: palette.textMuted, fontSize: 12 }}>{label}</Text>
     </View>
   );
 }
@@ -507,15 +588,15 @@ function StatCard({
 function Section({
   title,
   children,
-  dark,
+  palette,
 }: {
   title: string;
   children: React.ReactNode;
-  dark?: boolean;
+  palette: Palette;
 }) {
   return (
-    <View style={[styles.card, dark && styles.cardDark]}>
-      <Text style={[styles.cardTitle, dark && { color: '#F8FAFC' }]}>{title}</Text>
+    <View style={{ backgroundColor: palette.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: palette.cardBorder }}>
+      <Text style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>{title}</Text>
       <View style={{ marginTop: 6 }}>{children}</View>
     </View>
   );
@@ -525,18 +606,21 @@ function SettingItem({
   icon,
   label,
   onPress,
-  dark,
+  palette,
 }: {
   icon: any;
   label: string;
   onPress?: () => void;
-  dark?: boolean;
+  palette: Palette;
 }) {
   return (
-    <TouchableOpacity style={[styles.settingRow, dark && styles.settingRowDark]} onPress={onPress}>
-      <Ionicons name={icon} size={20} color={dark ? '#93C5FD' : '#4F46E5'} />
-      <Text style={[styles.settingLabel, dark && { color: '#E5E7EB' }]}>{label}</Text>
-      <Ionicons name="chevron-forward" size={18} color={dark ? '#64748B' : '#9CA3AF'} />
+    <TouchableOpacity
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}
+      onPress={onPress}
+    >
+      <Ionicons name={icon} size={20} color={palette.ionMain} />
+      <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+      <Ionicons name="chevron-forward" size={18} color={palette.ionMuted} />
     </TouchableOpacity>
   );
 }
@@ -546,19 +630,24 @@ function SettingSwitch({
   label,
   value,
   onValueChange,
-  dark,
+  palette,
 }: {
   icon: any;
   label: string;
   value: boolean;
   onValueChange: (v: boolean) => void;
-  dark?: boolean;
+  palette: Palette;
 }) {
   return (
-    <View style={[styles.settingRow, dark && styles.settingRowDark]}>
-      <Ionicons name={icon} size={20} color={dark ? '#93C5FD' : '#4F46E5'} />
-      <Text style={[styles.settingLabel, dark && { color: '#E5E7EB' }]}>{label}</Text>
-      <Switch value={value} onValueChange={onValueChange} />
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}>
+      <Ionicons name={icon} size={20} color={palette.ionMain} />
+      <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+        thumbColor={value ? '#2563EB' : '#ffffff'}
+      />
     </View>
   );
 }
@@ -568,217 +657,23 @@ function SettingPicker({
   label,
   value,
   onPress,
-  dark,
+  palette,
 }: {
   icon: any;
   label: string;
   value: string;
   onPress?: () => void;
-  dark?: boolean;
+  palette: Palette;
 }) {
   return (
-    <TouchableOpacity style={[styles.settingRow, dark && styles.settingRowDark]} onPress={onPress}>
-      <Ionicons name={icon} size={20} color={dark ? '#93C5FD' : '#4F46E5'} />
-      <Text style={[styles.settingLabel, dark && { color: '#E5E7EB' }]}>{label}</Text>
-      <Text style={[styles.pickerValue, dark && { color: '#CBD5E1' }]}>{value}</Text>
-      <Ionicons name="swap-vertical" size={18} color={dark ? '#64748B' : '#9CA3AF'} />
+    <TouchableOpacity
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}
+      onPress={onPress}
+    >
+      <Ionicons name={icon} size={20} color={palette.ionMain} />
+      <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ marginRight: 6, color: palette.textMuted, fontSize: 13 }}>{value}</Text>
+      <Ionicons name="swap-vertical" size={18} color={palette.ionMuted} />
     </TouchableOpacity>
   );
 }
-
-/* ---------- Styles ---------- */
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0B1220',
-  },
-  scroll: {
-    padding: 16,
-    gap: 12,
-  },
-  card: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-  },
-  cardDark: {
-    backgroundColor: '#0F172A',
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 999,
-    backgroundColor: '#1E293B',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarDark: {
-    backgroundColor: '#0B1020',
-  },
-  avatarTxt: {
-    color: '#0EA5E9',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  name: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#E5E7EB',
-  },
-  email: {
-    fontSize: 13,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-
-  levelPill: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-  },
-  levelTxt: {
-    color: '#CBD5E1',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-    alignItems: 'flex-start',
-    gap: 6,
-  },
-  statCardDark: {
-    backgroundColor: '#0F172A',
-  },
-  statIconWrap: {
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-  },
-  statValue: {
-    color: '#F8FAFC',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  statLabel: {
-    color: '#94A3B8',
-    fontSize: 12,
-  },
-
-  cardHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  cardTitle: {
-    color: '#E5E7EB',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  link: {
-    color: '#60A5FA',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  badge: {
-    width: 110,
-    height: 78,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#1F2A44',
-    backgroundColor: '#0B1220',
-    padding: 10,
-    justifyContent: 'center',
-    gap: 6,
-  },
-  badgeDark: {
-    backgroundColor: '#0B1220',
-  },
-  badgeTxt: {
-    color: '#CBD5E1',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  empty: {
-    marginTop: 10,
-    color: '#64748B',
-    fontSize: 13,
-  },
-
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#132040',
-  },
-  settingRowDark: {
-    borderBottomColor: '#132040',
-  },
-  settingLabel: {
-    flex: 1,
-    color: '#0EA5E9',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  pickerValue: {
-    marginRight: 6,
-    color: '#64748B',
-    fontSize: 13,
-  },
-
-  logoutBtn: {
-    marginTop: 6,
-    backgroundColor: '#EF4444',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  logoutTxt: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-
-  editBtn: {
-    flexDirection: 'row',
-    gap: 6,
-    backgroundColor: '#93C5FD',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  editTxt: {
-    color: '#111827',
-    fontWeight: '700',
-  },
-});

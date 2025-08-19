@@ -5,6 +5,9 @@ import {
   ActivityIndicator,
   FlatList,
   RefreshControl,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -31,13 +34,13 @@ type LibraryItem = {
   id: string;
   title: string;
   subtitle?: string;
-  grade: number;                    // 1..12
+  grade: number; // 1..12
   type: 'pdf' | 'video' | 'exercise' | 'note' | 'link';
   coverUrl?: string;
   tags?: string[];
-  updatedAt?: any;                  // Firestore Timestamp | null
-  lessonId?: string;                // nếu muốn mở sang bài học
-  url?: string;                     // nếu là link/pdf/video ngoài
+  updatedAt?: any; // Firestore Timestamp | null
+  lessonId?: string;
+  url?: string;
   sizeMB?: number;
   pages?: number;
   durationSec?: number;
@@ -47,13 +50,33 @@ type LibraryItem = {
 /* ---------- Consts ---------- */
 const PAGE_SIZE = 12;
 const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
-const TYPE_ICON: Record<LibraryItem['type'], React.ComponentProps<typeof MaterialCommunityIcons>['name']> = {
+const TYPES: LibraryItem['type'][] = ['pdf', 'video', 'exercise', 'note', 'link'];
+
+const TYPE_ICON: Record<
+  LibraryItem['type'],
+  React.ComponentProps<typeof MaterialCommunityIcons>['name']
+> = {
   pdf: 'file-pdf-box',
   video: 'play-circle',
   exercise: 'atom-variant',
   note: 'note-text-outline',
   link: 'link-variant',
 };
+
+/* ---------- Dark Palette (giống ảnh) ---------- */
+const COLORS = {
+  bg: '#0F172A',       // slate-900
+  card: '#111827',     // gray-900
+  ink: '#F8FAFC',      // slate-50
+  sub: '#94A3B8',      // slate-400
+  border: '#1F2937',   // slate-800
+  chipBg: '#334155',   // slate-700
+  chipText: '#E2E8F0', // slate-200
+  primary: '#3B82F6',  // blue-500
+  mute: '#64748B',     // slate-500
+};
+
+const RADIUS = { lg: 16, md: 12, pill: 999 };
 
 /* ---------- Helper: Debounce ---------- */
 function useDebounced<T>(value: T, delay = 350) {
@@ -79,26 +102,26 @@ export default function LibraryScreen() {
   // filters
   const [queryText, setQueryText] = useState('');
   const [grade, setGrade] = useState<number | null>(null);
+  const [typeFilter, setTypeFilter] = useState<LibraryItem['type'] | null>(null);
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
   const debouncedQ = useDebounced(queryText.trim().toLowerCase(), 400);
 
   /* ---------- Build Firestore query ---------- */
   const buildQuery = useCallback(() => {
-    const col = collection(db, 'library'); // (collection: library)
-    let qRef: any[] = [];
+    const col = collection(db, 'library');
+    const parts: any[] = [];
 
-    if (grade) qRef.push(where('grade', '==', grade));
-    // tìm kiếm đơn giản bằng field keywords (bạn có thể lưu lowercase title + tags)
-    // nếu bạn CHƯA có trường keywords (array of string) thì bỏ đoạn where này,
-    // và ta sẽ lọc client-side ở dưới
-    // Ví dụ: qRef.push(where('keywords', 'array-contains', debouncedQ));
+    if (grade) parts.push(where('grade', '==', grade));
+    if (typeFilter) parts.push(where('type', '==', typeFilter));
+    // Nếu có field `keywords` (lowercase title + tags) có thể bật:
+    // if (debouncedQ) parts.push(where('keywords', 'array-contains', debouncedQ));
 
-    qRef.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
-    qRef.push(limit(PAGE_SIZE));
+    parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
+    parts.push(limit(PAGE_SIZE));
 
     // @ts-ignore
-    return query(col, ...qRef);
-  }, [grade, sortBy]);
+    return query(col, ...parts);
+  }, [grade, typeFilter, sortBy]);
 
   /* ---------- Load first page ---------- */
   const loadInitial = useCallback(async () => {
@@ -111,7 +134,6 @@ export default function LibraryScreen() {
       const snap = await getDocs(qRef);
       const data: LibraryItem[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
 
-      // Nếu không có trường keywords để search server-side, lọc client tại đây
       const filtered = debouncedQ
         ? data.filter(it =>
             (it.title || '').toLowerCase().includes(debouncedQ) ||
@@ -139,6 +161,7 @@ export default function LibraryScreen() {
       const col = collection(db, 'library');
       const parts: any[] = [];
       if (grade) parts.push(where('grade', '==', grade));
+      if (typeFilter) parts.push(where('type', '==', typeFilter));
       parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
       parts.push(startAfter(lastDocRef.current));
       parts.push(limit(PAGE_SIZE));
@@ -161,12 +184,10 @@ export default function LibraryScreen() {
     } catch (e) {
       console.warn('loadMore error', e);
     }
-  }, [grade, sortBy, debouncedQ, hasMore, loading, refreshing]);
+  }, [grade, typeFilter, sortBy, debouncedQ, hasMore, loading, refreshing]);
 
   /* ---------- Effects ---------- */
-  useEffect(() => {
-    loadInitial();
-  }, [grade, sortBy, debouncedQ]); // thay đổi filter -> tải lại
+  useEffect(() => { loadInitial(); }, [grade, typeFilter, sortBy, debouncedQ]);
 
   /* ---------- Refresh ---------- */
   const onRefresh = useCallback(async () => {
@@ -179,151 +200,119 @@ export default function LibraryScreen() {
   const renderItem = useCallback(({ item }: { item: LibraryItem }) => {
     const iconName = TYPE_ICON[item.type] || 'file-outline';
     const goDetail = () => {
-      // Ưu tiên lessonId, nếu có thì đẩy qua màn bài học
       if (item.lessonId) {
         router.push(`/Learnning/Lesson/${item.lessonId}`);
         return;
       }
-      // Nếu là link/pdf/video ngoài thì mở màn LibraryItem chi tiết (tùy bạn xây)
-      router.push({ pathname: '/Library/Item', params: { id: item.id } });
+      router.push({ pathname: '/(tabs)/Library/Item', params: { id: item.id } });
     };
 
     return (
-      <TouchableOpacity
-        onPress={goDetail}
-        activeOpacity={0.9}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          padding: 14,
-          backgroundColor: '#fff',
-          borderRadius: 16,
-          marginHorizontal: 16,
-          marginVertical: 8,
-          elevation: 1,
-          shadowColor: '#000',
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-        }}
-      >
-        <View
-          style={{
-            width: 54,
-            height: 54,
-            borderRadius: 14,
-            backgroundColor: '#F3F4F6',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: 12,
-          }}
-        >
-          <MaterialCommunityIcons name={iconName} size={28} color="#111827" />
+      <TouchableOpacity onPress={goDetail} activeOpacity={0.9} style={styles.card}>
+        <View style={styles.cardIcon}>
+          <MaterialCommunityIcons name={iconName} size={28} color={COLORS.ink} />
         </View>
 
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }} numberOfLines={1}>
-            {item.title || 'Tài liệu'}
-          </Text>
-          <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 2 }} numberOfLines={1}>
+          <Text style={styles.cardTitle} numberOfLines={1}>{item.title || 'Tài liệu'}</Text>
+          <Text style={styles.cardSub} numberOfLines={1}>
             {item.subtitle || `Lớp ${item.grade} • ${item.type}`}
           </Text>
 
           {!!item.tags?.length && (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
+            <View style={styles.tagRow}>
               {item.tags.slice(0, 3).map((t, idx) => (
-                <View
-                  key={idx}
-                  style={{
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                    backgroundColor: '#EEF2FF',
-                    borderRadius: 999,
-                    marginRight: 6,
-                    marginBottom: 6,
-                  }}
-                >
-                  <Text style={{ fontSize: 11, color: '#4F46E5' }}>#{t}</Text>
+                <View key={idx} style={styles.tagChip}>
+                  <Text style={styles.tagText}>#{t}</Text>
                 </View>
               ))}
             </View>
           )}
         </View>
 
-        <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        <Ionicons name="chevron-forward" size={20} color={COLORS.mute} />
       </TouchableOpacity>
     );
   }, [router]);
 
   const keyExtractor = useCallback((it: LibraryItem) => it.id, []);
 
-  /* ---------- Header: Search + Filters ---------- */
+  /* ---------- Header: Title + Type filter + Search + Grade chips ---------- */
   const ListHeader = useMemo(() => {
     return (
-      <View style={{ paddingTop: insets.top + 8, paddingBottom: 8, backgroundColor: '#FFFFFF' }}>
-        {/* Title */}
-        <View style={{ paddingHorizontal: 16, paddingBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ fontSize: 24, fontWeight: '800', color: '#111827', flex: 1 }}>Thư viện</Text>
+      <View style={[styles.headerWrap, { paddingTop: insets.top + 4 }]}>
+        {/* Title row */}
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Thư viện</Text>
           <TouchableOpacity
             onPress={() => setSortBy(s => (s === 'updatedAt' ? 'title' : 'updatedAt'))}
-            style={{ flexDirection: 'row', alignItems: 'center', padding: 8 }}
+            style={styles.sortBtn}
           >
-            <Ionicons name="swap-vertical" size={18} color="#374151" />
-            <Text style={{ marginLeft: 6, color: '#374151' }}>
-              {sortBy === 'updatedAt' ? 'Mới nhất' : 'A → Z'}
-            </Text>
+            <Ionicons name="swap-vertical" size={18} color={COLORS.ink} />
+            <Text style={styles.sortText}>{sortBy === 'updatedAt' ? 'Mới nhất' : 'A → Z'}</Text>
           </TouchableOpacity>
         </View>
 
+        {/* Type filter chips
+        <View style={styles.modeRow}>
+          {(['Tất cả', ...TYPES] as const).map((label, i) => {
+            const isAll = label === 'Tất cả';
+            const active = isAll ? typeFilter === null : typeFilter === label;
+            const text = isAll
+              ? 'Tất cả'
+              : label === 'pdf' ? 'PDF'
+              : label === 'video' ? 'Video'
+              : label === 'exercise' ? 'Bài tập'
+              : label === 'note' ? 'Ghi chú'
+              : 'Link';
+            return (
+              <TouchableOpacity
+                key={i}
+                onPress={() => setTypeFilter(isAll ? null : (label as LibraryItem['type']))}
+                style={[styles.modeChip, { backgroundColor: active ? COLORS.primary : COLORS.chipBg }]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.modeText, { color: active ? '#FFFFFF' : COLORS.chipText }]}>{text}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View> */}
+
         {/* Search */}
-        <View
-          style={{
-            marginHorizontal: 16,
-            marginBottom: 8,
-            borderRadius: 14,
-            backgroundColor: '#F3F4F6',
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingHorizontal: 12,
-            height: 44,
-          }}
-        >
-          <Ionicons name="search" size={18} color="#6B7280" />
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={18} color={COLORS.mute} />
           <TextInput
             placeholder="Tìm tài liệu, tag, chủ đề…"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={COLORS.mute}
             value={queryText}
             onChangeText={setQueryText}
-            style={{ flex: 1, marginLeft: 8, color: '#111827' }}
+            style={styles.searchInput}
             returnKeyType="search"
           />
           {!!queryText && (
             <TouchableOpacity onPress={() => setQueryText('')}>
-              <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+              <Ionicons name="close-circle" size={18} color={COLORS.mute} />
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Grade filter */}
+        {/* Grade filter chips */}
         <FlatList
           horizontal
           data={GRADES}
           keyExtractor={(g) => `g${g}`}
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6 }}
+          contentContainerStyle={styles.gradeList}
           renderItem={({ item: g }) => {
             const active = grade === g;
             return (
               <TouchableOpacity
                 onPress={() => setGrade(prev => (prev === g ? null : g))}
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 999,
-                  marginHorizontal: 4,
-                  backgroundColor: active ? '#4F46E5' : '#EEF2FF',
-                }}
+                style={[styles.gradeChip, { backgroundColor: active ? COLORS.primary : COLORS.chipBg }]}
               >
-                <Text style={{ color: active ? '#fff' : '#4F46E5', fontWeight: '600' }}>Lớp {g}</Text>
+                <Text style={[styles.gradeText, { color: active ? '#FFFFFF' : COLORS.chipText }]}>
+                  Lớp {g}
+                </Text>
               </TouchableOpacity>
             );
           }}
@@ -332,17 +321,17 @@ export default function LibraryScreen() {
         />
       </View>
     );
-  }, [insets.top, queryText, grade, sortBy]);
+  }, [insets.top, queryText, grade, sortBy, typeFilter]);
 
   /* ---------- Empty / Footer ---------- */
   const ListEmpty = useCallback(() => (
-    <View style={{ alignItems: 'center', paddingTop: 48 }}>
+    <View style={styles.emptyWrap}>
       {loading ? (
-        <ActivityIndicator />
+        <ActivityIndicator color={COLORS.mute} />
       ) : (
         <>
-          <Ionicons name="book-outline" size={42} color="#9CA3AF" />
-          <Text style={{ color: '#6B7280', marginTop: 8 }}>Không có tài liệu phù hợp</Text>
+          <Ionicons name="book-outline" size={42} color={COLORS.mute} />
+          <Text style={styles.emptyText}>Không có tài liệu phù hợp</Text>
         </>
       )}
     </View>
@@ -353,26 +342,121 @@ export default function LibraryScreen() {
     if (!hasMore) return <View style={{ height: 24 }} />;
     return (
       <View style={{ paddingVertical: 16 }}>
-        <ActivityIndicator />
+        <ActivityIndicator color={COLORS.mute} />
       </View>
     );
   }, [loading, hasMore, items.length]);
 
   /* ---------- Render ---------- */
   return (
-    <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
-      <FlatList
-        data={items}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        onEndReachedThreshold={0.3}
-        onEndReached={loadMore}
-        ListHeaderComponent={ListHeader}
-        ListEmptyComponent={ListEmpty}
-        ListFooterComponent={ListFooter}
-        contentContainerStyle={{ paddingBottom: 24 }}
-      />
-    </View>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.container}>
+        <FlatList
+          data={items}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.mute} />}
+          onEndReachedThreshold={0.3}
+          onEndReached={loadMore}
+          ListHeaderComponent={ListHeader}
+          ListEmptyComponent={ListEmpty}
+          ListFooterComponent={ListFooter}
+          contentContainerStyle={{ paddingBottom: 24 }}
+        />
+      </View>
+    </SafeAreaView>
   );
 }
+
+/* ---------- Styles ---------- */
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+
+  headerWrap: { backgroundColor: COLORS.bg, paddingBottom: 8 },
+  titleRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  title: { fontSize: 24, fontWeight: '800', color: COLORS.ink, flex: 1 },
+  sortBtn: { flexDirection: 'row', alignItems: 'center', padding: 8 },
+  sortText: { marginLeft: 6, color: COLORS.ink, fontWeight: '600' },
+
+  /* Type filter row */
+  modeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  modeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.chipBg,
+  },
+  modeText: { fontWeight: '700' },
+
+  searchBox: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: RADIUS.md,
+    backgroundColor: '#1F2937', // slate-800
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  searchInput: { flex: 1, marginLeft: 8, color: COLORS.ink },
+
+  gradeList: { paddingHorizontal: 12, paddingVertical: 6 },
+  gradeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+    marginHorizontal: 4,
+  },
+  gradeText: { fontWeight: '700' },
+
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.lg,
+    marginHorizontal: 16,
+    marginVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    elevation: 0, // bỏ bóng trên dark
+  },
+  cardIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: '#1F2937', // slate-800
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: COLORS.ink },
+  cardSub: { fontSize: 13, color: COLORS.sub, marginTop: 2 },
+
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
+  tagChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: COLORS.chipBg,
+    borderRadius: RADIUS.pill,
+    marginRight: 6,
+    marginBottom: 6,
+  },
+  tagText: { fontSize: 11, color: COLORS.chipText, fontWeight: '600' },
+
+  emptyWrap: { alignItems: 'center', paddingTop: 48 },
+  emptyText: { color: COLORS.sub, marginTop: 8 },
+});

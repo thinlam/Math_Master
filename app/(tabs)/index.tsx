@@ -1,4 +1,3 @@
-// app/(tabs)/index.tsx hoặc app/(tabs)/home.tsx
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -6,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   RefreshControl,
   SafeAreaView,
@@ -16,16 +16,12 @@ import {
   View,
 } from 'react-native';
 
-/* ===========================
-   Firebase
-   =========================== */
+/* Firebase */
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
-/* ===========================
-   i18n (ngắn gọn)
-   =========================== */
+/* i18n (rút gọn) */
 const I18N = {
   vi: {
     hello: 'Xin chào',
@@ -56,33 +52,24 @@ function t(key: keyof typeof I18N['vi']) {
   return I18N[LANG][key];
 }
 
-/* ===========================
-   Kiểu dữ liệu
-   =========================== */
 type BadgeItem = { id: string; title: string; icon: string };
 type UserProfile = {
   uid: string;
   name: string;
   email: string;
-  level: string | null; // chuỗi: "Lớp 1"
+  level: string | null;
   points: number;
   badges: BadgeItem[];
   streak: number;
   photoURL?: string | null;
 };
 
-/* ===========================
-   Danh sách lớp
-   =========================== */
 const CLASS_OPTIONS = [
-  'Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5-Chuyển cấp',
-  'Lớp 6', 'Lớp 7', 'Lớp 8', 'Lớp 9-Chuyển cấp',
-  'Lớp 10', 'Lớp 11', 'Lớp 12-THPTQG',
+  'Lớp 1','Lớp 2','Lớp 3','Lớp 4','Lớp 5-Chuyển cấp',
+  'Lớp 6','Lớp 7','Lớp 8','Lớp 9-Chuyển cấp',
+  'Lớp 10','Lớp 11','Lớp 12-THPTQG',
 ];
 
-/* ===========================
-   Helper: chuyển “Lớp X” -> number
-   =========================== */
 function classToGradeNumber(levelStr: string): number | null {
   const m = levelStr.match(/\d+/);
   if (!m) return null;
@@ -90,9 +77,6 @@ function classToGradeNumber(levelStr: string): number | null {
   return n >= 1 && n <= 12 ? n : null;
 }
 
-/* ===========================
-   Home Screen
-   =========================== */
 export default function HomeScreen() {
   const router = useRouter();
 
@@ -105,7 +89,6 @@ export default function HomeScreen() {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [savingClass, setSavingClass] = useState(false);
 
-  // Theo dõi đăng nhập
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
@@ -114,7 +97,6 @@ export default function HomeScreen() {
     return unsub;
   }, [router]);
 
-  // Tải hồ sơ
   const fetchProfile = useCallback(
     async (u: User) => {
       setLoading(true);
@@ -126,7 +108,8 @@ export default function HomeScreen() {
           uid: u.uid,
           name: u.displayName || data.name || 'User',
           email: u.email || data.email || 'user@example.com',
-          photoURL: u.photoURL || data.photoURL || null,
+          // Ưu tiên ảnh từ Firestore (Cloudinary URL) nếu có
+          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
           level: data.level ?? null,
           points: typeof data.points === 'number' ? data.points : 0,
           streak: typeof data.streak === 'number' ? data.streak : 0,
@@ -163,7 +146,6 @@ export default function HomeScreen() {
   const openClassModal = () => setClassModalVisible(true);
   const closeClassModal = () => setClassModalVisible(false);
 
-  // Lưu lớp mới
   const saveClass = async () => {
     if (!firebaseUser) return;
     if (!selectedClass) {
@@ -175,15 +157,11 @@ export default function HomeScreen() {
       await updateDoc(doc(db, 'users', firebaseUser.uid), { level: selectedClass });
       setUser((prev) => (prev ? { ...prev, level: selectedClass } : prev));
 
-      // sync sang AsyncStorage cho màn Learn
       const g = classToGradeNumber(selectedClass);
       if (g) {
         await AsyncStorage.setItem('selectedGrade', String(g));
       }
-
       closeClassModal();
-
-      // điều hướng sang Learn luôn
       router.push('/');
     } catch (e) {
       console.error(e);
@@ -193,7 +171,6 @@ export default function HomeScreen() {
     }
   };
 
-  // nút "Bắt đầu học"
   const handleStartLearning = useCallback(async () => {
     const levelStr = user?.level ?? selectedClass;
     const g = levelStr ? classToGradeNumber(levelStr) : null;
@@ -203,7 +180,6 @@ export default function HomeScreen() {
     router.push('/Learnning/Learn');
   }, [router, user?.level, selectedClass]);
 
-  /* ---------- Loading ---------- */
   if (!firebaseUser || loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -215,21 +191,28 @@ export default function HomeScreen() {
     );
   }
 
-  /* ---------- UI ---------- */
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />}
       >
         {/* Header */}
         <View style={styles.headerCard}>
           <View style={styles.row}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarTxt}>{initials}</Text>
-            </View>
+            {/* AVATAR: ưu tiên ảnh nếu có */}
+            {user?.photoURL ? (
+              <Image
+                source={{ uri: user.photoURL }}
+                style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: '#1E293B' }}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarTxt}>{initials}</Text>
+              </View>
+            )}
+
             <View style={{ flex: 1 }}>
               <Text style={styles.hello}>
                 {t('hello')}, {user?.name || 'User'} 👋
@@ -342,7 +325,7 @@ function StatCard({ icon, label, value, color }: { icon: any; label: string; val
   );
 }
 
-/* ---------- Styles ---------- */
+/* ---------- Styles (giữ nguyên phần còn lại) ---------- */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0B1220' },
   scroll: { padding: 16, gap: 12 },

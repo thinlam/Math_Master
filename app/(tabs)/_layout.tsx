@@ -74,7 +74,15 @@ export default function TabLayout() {
         options={{
           href: null, // không xuất hiện trong tab bar, nhưng vẫn có thể router.push(...)
         }}
+        
+      />
+      <Tabs.Screen
+        name = "Library/Item"
+        options={{
+          href: null, // không xuất hiện trong tab bar, nhưng vẫn có thể router.push(...)
+        }}  
       />
     </Tabs>
+    
   );
 }

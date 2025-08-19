@@ -18,18 +18,19 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-/* Firebase */
-import { auth, db, storage } from '@/scripts/firebase';
+/* Firebase (Firestore + Auth) */
+import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, updateProfile, User } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 
+/* ---------- Cloudinary config ---------- */
+const CLOUD_NAME = 'djf9vnngm';                  // đổi theo cloud của bạn
+const UPLOAD_PRESET = 'upload_avatars_unsigned'; // preset unsigned cho avatar
+const CLOUD_FOLDER = 'avatars';                  // thư mục lưu avatar
+const USE_FIXED_PUBLIC_ID = false;               // true = dùng 'avatar_<uid>' (cần bật Overwrite + Unique filename=false)
+
+/* ---------- UI constants ---------- */
 const LEVELS = Array.from({ length: 12 }, (_, i) => `Lớp ${i + 1}`);
-
-async function uriToBlob(uri: string): Promise<Blob> {
-  const res = await fetch(uri);
-  return await res.blob();
-}
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -44,6 +45,9 @@ export default function EditProfileScreen() {
   const [level, setLevel] = useState<string>('');
   const [photoURL, setPhotoURL] = useState<string | undefined>(undefined);
   const [localAvatar, setLocalAvatar] = useState<string | null>(null);
+
+  // cache-buster để ép <Image> tải ảnh mới
+  const [imgVersion, setImgVersion] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -70,11 +74,11 @@ export default function EditProfileScreen() {
     }, [])
   );
 
+  // Có thay đổi khi: đổi tên / đổi level / chọn ảnh mới
   const hasChanges = useMemo(() => {
-    if (!user) return false;
-    const n = name.trim();
-    return !loading && (!!n || !!level || !!localAvatar);
-  }, [loading, name, level, localAvatar, user]);
+    if (!user || loading) return false;
+    return name.trim().length > 0 || level.length > 0 || !!localAvatar;
+  }, [user, loading, name, level, localAvatar]);
 
   const pickImage = async () => {
     try {
@@ -97,6 +101,32 @@ export default function EditProfileScreen() {
     }
   };
 
+  /** Upload ảnh lên Cloudinary, trả về secure_url */
+  const uploadAvatarToCloudinary = async (uri: string, publicId?: string): Promise<string> => {
+    // Không set Content-Type để RN tự thêm boundary cho multipart/form-data
+    const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
+    const rnFile: any = { uri, name: `avatar.${ext}`, type: 'image/jpeg' };
+
+    const form = new FormData();
+    form.append('file', rnFile as any);
+    form.append('upload_preset', UPLOAD_PRESET);
+    form.append('folder', CLOUD_FOLDER);
+    if (publicId) form.append('public_id', publicId);
+
+    const endpoint = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`;
+    const resp = await fetch(endpoint, { method: 'POST', body: form });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      console.log('Cloudinary status:', resp.status);
+      console.log('Cloudinary response:', text);
+      throw new Error(`Cloudinary upload failed: ${resp.status}`);
+    }
+
+    const json = await resp.json();
+    return json.secure_url as string;
+  };
+
   const handleSave = async () => {
     if (!user) return;
     const n = name.trim();
@@ -104,24 +134,32 @@ export default function EditProfileScreen() {
       Alert.alert('Thiếu thông tin', 'Vui lòng nhập Họ & Tên.');
       return;
     }
+
     setSaving(true);
     try {
       let newPhotoURL = photoURL;
 
+      // Nếu có chọn ảnh mới → upload Cloudinary
       if (localAvatar) {
-        if (!storage) {
-          Alert.alert('Thiếu cấu hình', 'Chưa cấu hình Firebase Storage.');
+        if (USE_FIXED_PUBLIC_ID) {
+          // YÊU CẦU preset: Unique filename=false + Overwrite=true
+          const publicId = `avatar_${user.uid}`;
+          newPhotoURL = await uploadAvatarToCloudinary(localAvatar, publicId);
         } else {
-          const blob = await uriToBlob(localAvatar);
-          const avatarRef = ref(storage, `avatars/${user.uid}.jpg`);
-          await uploadBytes(avatarRef, blob);
-          newPhotoURL = await getDownloadURL(avatarRef);
-          setPhotoURL(newPhotoURL);
+          // Mỗi lần 1 URL mới → tránh cache, không cần Overwrite
+          newPhotoURL = await uploadAvatarToCloudinary(localAvatar);
         }
+        setPhotoURL(newPhotoURL);
       }
 
+      // Cập nhật Auth profile
       await updateProfile(user, { displayName: n, photoURL: newPhotoURL || null });
 
+      // Reload để đồng bộ currentUser sang giá trị mới
+      await auth.currentUser?.reload();
+      setUser(auth.currentUser);
+
+      // Lưu Firestore
       await setDoc(
         doc(db, 'users', user.uid),
         {
@@ -135,6 +173,10 @@ export default function EditProfileScreen() {
         { merge: true }
       );
 
+      // Làm mới cache hiển thị & bỏ local preview
+      setImgVersion((v) => v + 1);
+      setLocalAvatar(null);
+
       Alert.alert('Thành công', 'Đã lưu hồ sơ.');
       router.back();
     } catch (e: any) {
@@ -146,10 +188,18 @@ export default function EditProfileScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, paddingTop: insets.top + 16, alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={{
+          flex: 1,
+          paddingTop: insets.top + 16,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#0B1220',
+        }}
+      >
         <StatusBar barStyle="light-content" />
         <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12, opacity: 0.7 }}>Đang tải hồ sơ...</Text>
+        <Text style={{ marginTop: 12, opacity: 0.7, color: '#fff' }}>Đang tải hồ sơ...</Text>
       </View>
     );
   }
@@ -199,7 +249,11 @@ export default function EditProfileScreen() {
             backgroundColor: saving || !hasChanges ? 'rgba(255,255,255,0.15)' : '#5B9EFF',
           }}
         >
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Lưu</Text>}
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Lưu</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -213,7 +267,7 @@ export default function EditProfileScreen() {
                 localAvatar
                   ? { uri: localAvatar }
                   : photoURL
-                  ? { uri: photoURL }
+                  ? { uri: `${photoURL}?t=${imgVersion}` } // cache-buster
                   : require('@/assets/images/icon.png')
               }
               style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: '#151B2B' }}

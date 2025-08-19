@@ -1,5 +1,4 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -36,21 +35,15 @@ import {
   where,
 } from 'firebase/firestore';
 
-/* ---------- Cloudinary config ---------- */
-const CLOUD_NAME = 'djf9vnngm';
-const UPLOAD_PRESET = 'upload_pdf_unsigned';
-const CLOUD_FOLDER = 'library';
-
-/* ---------- Types ---------- */
+/* ---------- Types (TEXT ONLY) ---------- */
 type LibraryItem = {
   id?: string;
   title: string;
   subtitle?: string;
-  grade: number; // 1..12
-  type: 'pdf';
+  grade: number;       // 1..12
   tags?: string[];
-  url: string; // cloudinary secure_url
-  updatedAt?: any; // Timestamp
+  content: string;     // Nội dung text copy từ Word
+  updatedAt?: any;     // Timestamp
 };
 
 const PAGE_SIZE = 20;
@@ -73,15 +66,14 @@ export default function AdminLibraryScreen() {
   const [gradeFilter, setGradeFilter] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
 
-  /* Modal Edit (chỉ còn dùng để sửa) */
+  /* Modal Add/Edit */
   const [visible, setVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [fTitle, setFTitle] = useState('');
   const [fSubtitle, setFSubtitle] = useState('');
   const [fGrade, setFGrade] = useState<number>(1);
-  const [fTags, setFTags] = useState<string>(''); // comma separated
-  const [fUrl, setFUrl] = useState<string>('');   // cloudinary url
-  const [uploading, setUploading] = useState(false);
+  const [fTags, setFTags] = useState<string>('');    // comma separated
+  const [fContent, setFContent] = useState<string>(''); // TEXT CONTENT
 
   const colRef = useMemo(() => collection(db, 'library'), []);
 
@@ -94,6 +86,18 @@ export default function AdminLibraryScreen() {
     return query(colRef, ...parts);
   }, [colRef, gradeFilter, sortBy]);
 
+  const applySearch = useCallback((arr: LibraryItem[]) => {
+    const t = qText.trim().toLowerCase();
+    if (!t) return arr;
+    return arr.filter((it) => {
+      const inTitle = it.title?.toLowerCase().includes(t);
+      const inSub = it.subtitle?.toLowerCase().includes(t);
+      const inTag = (it.tags || []).some((x) => x.toLowerCase().includes(t));
+      const inContent = it.content?.toLowerCase().includes(t);
+      return inTitle || inSub || inTag || inContent;
+    });
+  }, [qText]);
+
   const fetchFirst = useCallback(async () => {
     setLoading(true);
     setHasMore(true);
@@ -103,18 +107,7 @@ export default function AdminLibraryScreen() {
       const snap = await getDocs(qRef);
       const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LibraryItem[];
 
-      const filtered = qText.trim()
-        ? data.filter((it) => {
-            const t = qText.trim().toLowerCase();
-            return (
-              it.title?.toLowerCase().includes(t) ||
-              it.subtitle?.toLowerCase().includes(t) ||
-              (it.tags || []).some((x) => x.toLowerCase().includes(t))
-            );
-          })
-        : data;
-
-      setItems(filtered);
+      setItems(applySearch(data));
       setHasMore(snap.docs.length === PAGE_SIZE);
       lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
     } catch (e) {
@@ -123,7 +116,7 @@ export default function AdminLibraryScreen() {
     } finally {
       setLoading(false);
     }
-  }, [buildQuery, qText]);
+  }, [buildQuery, applySearch]);
 
   const fetchMore = useCallback(async () => {
     if (!hasMore || loading || refreshing || !lastDocRef.current) return;
@@ -137,24 +130,14 @@ export default function AdminLibraryScreen() {
 
       const snap = await getDocs(qRef);
       const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LibraryItem[];
-      const filtered = qText.trim()
-        ? data.filter((it) => {
-            const t = qText.trim().toLowerCase();
-            return (
-              it.title?.toLowerCase().includes(t) ||
-              it.subtitle?.toLowerCase().includes(t) ||
-              (it.tags || []).some((x) => x.toLowerCase().includes(t))
-            );
-          })
-        : data;
 
-      setItems((prev) => [...prev, ...filtered]);
+      setItems((prev) => [...prev, ...applySearch(data)]);
       setHasMore(snap.docs.length === PAGE_SIZE);
       lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : lastDocRef.current;
     } catch (e) {
       console.warn('fetchMore error', e);
     }
-  }, [colRef, gradeFilter, sortBy, qText, hasMore, loading, refreshing]);
+  }, [colRef, gradeFilter, sortBy, hasMore, loading, refreshing, applySearch]);
 
   useEffect(() => {
     fetchFirst();
@@ -173,14 +156,13 @@ export default function AdminLibraryScreen() {
     setFSubtitle('');
     setFGrade(1);
     setFTags('');
-    setFUrl('');
+    setFContent('');
   }, []);
 
-  // THAY ĐỔI: Add → điều hướng sang trang thêm mới
   const openAdd = useCallback(() => {
     resetForm();
-    router.push('/(admin)/library/add');
-  }, [resetForm, router]);
+    setVisible(true);
+  }, [resetForm]);
 
   const openEdit = useCallback((it: LibraryItem) => {
     setEditingId(it.id || null);
@@ -188,62 +170,8 @@ export default function AdminLibraryScreen() {
     setFSubtitle(it.subtitle || '');
     setFGrade(it.grade || 1);
     setFTags((it.tags || []).join(', '));
-    setFUrl(it.url || '');
+    setFContent(it.content || '');
     setVisible(true);
-  }, []);
-
-  /** Chọn và upload PDF lên Cloudinary (dùng trong Sửa) */
-  const pickPdf = useCallback(async () => {
-    const res = await DocumentPicker.getDocumentAsync({
-      type: 'application/pdf',
-      copyToCacheDirectory: true,
-      multiple: false,
-    });
-    if (res.canceled) return;
-    const file = res.assets?.[0];
-    if (!file?.uri) return;
-
-    try {
-      setUploading(true);
-
-      const MAX_MB = 10;
-      if (file.size && file.size > MAX_MB * 1024 * 1024) {
-        Alert.alert('File quá lớn', `Giới hạn ${MAX_MB}MB.`);
-        return;
-      }
-
-      const rnFile = {
-        uri: file.uri,
-        name: file.name?.endsWith('.pdf') ? file.name : (file.name || `document-${Date.now()}.pdf`),
-        type: file.mimeType || 'application/pdf',
-      } as any;
-
-      const form = new FormData();
-      form.append('file', rnFile);
-      form.append('upload_preset', UPLOAD_PRESET);
-      form.append('folder', CLOUD_FOLDER);
-
-      const endpoint = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`;
-      const resp = await fetch(endpoint, { method: 'POST', body: form });
-
-      if (!resp.ok) {
-        const text = await resp.text();
-        console.log('Cloudinary status:', resp.status);
-        console.log('Cloudinary response:', text);
-        throw new Error(`Cloudinary upload failed: ${resp.status}`);
-      }
-
-      const json = await resp.json();
-      const url = json.secure_url as string;
-
-      setFUrl(url);
-      Alert.alert('Thành công', 'Đã tải PDF lên Cloudinary.');
-    } catch (e: any) {
-      console.warn('upload pdf error', e);
-      Alert.alert('Lỗi', e?.message ?? 'Tải PDF thất bại.');
-    } finally {
-      setUploading(false);
-    }
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -251,8 +179,8 @@ export default function AdminLibraryScreen() {
       Alert.alert('Thiếu thông tin', 'Vui lòng nhập tiêu đề.');
       return;
     }
-    if (!fUrl) {
-      Alert.alert('Thiếu file', 'Vui lòng chọn và tải lên PDF.');
+    if (!fContent.trim()) {
+      Alert.alert('Thiếu nội dung', 'Vui lòng nhập nội dung.');
       return;
     }
 
@@ -260,12 +188,11 @@ export default function AdminLibraryScreen() {
       title: fTitle.trim(),
       subtitle: fSubtitle.trim() || '',
       grade: Number(fGrade) || 1,
-      type: 'pdf',
       tags: fTags
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
-      url: fUrl,
+      content: fContent.trim(),
       updatedAt: serverTimestamp(),
     };
 
@@ -285,7 +212,7 @@ export default function AdminLibraryScreen() {
       console.warn('save error', e);
       Alert.alert('Lỗi', 'Không thể lưu tài liệu.');
     }
-  }, [editingId, fTitle, fSubtitle, fGrade, fTags, fUrl, resetForm, fetchFirst]);
+  }, [editingId, fTitle, fSubtitle, fGrade, fTags, fContent, resetForm, fetchFirst]);
 
   const handleDelete = useCallback((id: string) => {
     Alert.alert('Xoá tài liệu?', 'Bạn chắc chắn muốn xoá?', [
@@ -337,7 +264,8 @@ export default function AdminLibraryScreen() {
               marginRight: 12,
             }}
           >
-            <MaterialCommunityIcons name="file-pdf-box" size={28} color="#B91C1C" />
+            {/* icon file-text thay vì pdf */}
+            <MaterialCommunityIcons name="file-document-outline" size={28} color="#4F46E5" />
           </View>
 
           <View style={{ flex: 1 }}>
@@ -345,7 +273,7 @@ export default function AdminLibraryScreen() {
               {item.title}
             </Text>
             <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }} numberOfLines={1}>
-              {item.subtitle || `Lớp ${item.grade} • PDF`}
+              {item.subtitle || `Lớp ${item.grade} • Văn bản`}
             </Text>
 
             {!!item.tags?.length && (
@@ -421,7 +349,7 @@ export default function AdminLibraryScreen() {
         >
           <Ionicons name="search" size={18} color="#6B7280" />
           <TextInput
-            placeholder="Tìm theo tiêu đề, tag…"
+            placeholder="Tìm theo tiêu đề, nội dung, tag…"
             placeholderTextColor="#9CA3AF"
             value={qText}
             onChangeText={setQText}
@@ -522,7 +450,7 @@ export default function AdminLibraryScreen() {
         contentContainerStyle={{ paddingBottom: 24 }}
       />
 
-      {/* Modal Edit only */}
+      {/* Modal Add/Edit */}
       <Modal visible={visible} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <KeyboardAvoidingView
@@ -629,36 +557,24 @@ export default function AdminLibraryScreen() {
                   }}
                 />
 
-                {/* PDF picker */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>File PDF *</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity
-                    onPress={pickPdf}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#111827',
-                      paddingHorizontal: 12,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                    }}
-                    disabled={uploading}
-                  >
-                    {uploading ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <>
-                        <MaterialCommunityIcons name="file-upload-outline" size={18} color="#fff" />
-                        <Text style={{ color: '#fff', marginLeft: 8, fontWeight: '700' }}>Chọn & Tải PDF</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                  <View style={{ marginLeft: 12, flex: 1 }}>
-                    <Text numberOfLines={2} style={{ color: fUrl ? '#065F46' : '#6B7280' }}>
-                      {fUrl ? 'Đã có URL PDF' : 'Chưa chọn PDF'}
-                    </Text>
-                  </View>
-                </View>
+                {/* CONTENT (TEXT) */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Nội dung *</Text>
+                <TextInput
+                  value={fContent}
+                  onChangeText={setFContent}
+                  placeholder="Dán nội dung từ Word hoặc tự gõ tại đây…"
+                  multiline
+                  textAlignVertical="top"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    paddingVertical: 12,
+                    minHeight: 220,
+                    marginBottom: 12,
+                  }}
+                />
 
                 {/* Actions */}
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
@@ -674,7 +590,6 @@ export default function AdminLibraryScreen() {
                       backgroundColor: '#E5E7EB',
                       marginRight: 10,
                     }}
-                    disabled={uploading}
                   >
                     <Text style={{ fontWeight: '700' }}>Huỷ</Text>
                   </TouchableOpacity>
@@ -687,7 +602,6 @@ export default function AdminLibraryScreen() {
                       borderRadius: 10,
                       backgroundColor: '#4F46E5',
                     }}
-                    disabled={uploading}
                   >
                     <Text style={{ fontWeight: '700', color: '#fff' }}>
                       {editingId ? 'Lưu thay đổi' : 'Thêm mới'}
