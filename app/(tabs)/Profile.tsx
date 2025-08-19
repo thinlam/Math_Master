@@ -15,7 +15,7 @@ import {
   Switch,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 
 /* ===========================
@@ -24,6 +24,11 @@ import {
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+
+/* ===========================
+   Theme (lấy từ Provider toàn cục)
+   =========================== */
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
 /* ===========================
    i18n
@@ -116,71 +121,13 @@ type UserProfile = {
 
 const SETTINGS_KEYS = {
   language: 'profile_language',
-  darkMode: 'profile_dark_mode',
   notifStudy: 'profile_notif_study',
   notifMarketing: 'profile_notif_marketing',
 };
 
 /* ===========================
-   THEME
+   Styles
    =========================== */
-/** Giữ nguyên màu tối như UI hiện tại */
-const THEME = {
-  DARK: {
-    // surfaces
-    bg: '#0B1220',
-    card: '#0F172A',
-    cardBorder: '#1F2A44',
-    // text
-    text: '#E5E7EB',
-    textMuted: '#94A3B8',
-    textFaint: '#CBD5E1',
-    // brand & accents
-    brand: '#0EA5E9',
-    brandSoft: '#60A5FA',
-    pillBg: '#111827',
-    pillBorder: '#1F2A44',
-    link: '#60A5FA',
-    // controls
-    divider: '#132040',
-    danger: '#EF4444',
-    editBtnBg: '#93C5FD',
-    editBtnText: '#111827',
-    statIconBgAlpha: '22',
-    // icons
-    ionMain: '#4F46E5',
-    ionMuted: '#64748B',
-    mciGold: '#F59E0B',
-    streak: '#EF4444',
-  },
-  /** Giao diện sáng — nền trắng, chữ đen (hoặc nếu muốn “font trắng như trang đăng ký”
-   * bạn có thể đổi text thành trắng và bg thành màu đậm ở đây) */
-  LIGHT: {
-    bg: '#FFFFFF',
-    card: '#FFFFFF',
-    cardBorder: '#E5E7EB',
-    text: '#111827',
-    textMuted: '#4B5563',
-    textFaint: '#374151',
-    brand: '#2563EB',
-    brandSoft: '#2563EB',
-    pillBg: '#F3F4F6',
-    pillBorder: '#E5E7EB',
-    link: '#2563EB',
-    divider: '#E5E7EB',
-    danger: '#DC2626',
-    editBtnBg: '#2563EB',
-    editBtnText: '#FFFFFF',
-    statIconBgAlpha: '22',
-    ionMain: '#4F46E5',
-    ionMuted: '#9CA3AF',
-    mciGold: '#D97706',
-    streak: '#DC2626',
-  },
-} as const;
-
-type Palette = typeof THEME.DARK;
-
 function makeStyles(p: Palette) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: p.bg },
@@ -219,15 +166,13 @@ function makeStyles(p: Palette) {
    =========================== */
 export default function ProfileScreen() {
   const router = useRouter();
+  const { themeName, colorScheme, palette, setTheme } = useTheme(); // lấy theme toàn cục
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   // --------- UI/Settings state ----------
   const [language, setLanguage] = useState<'vi' | 'en'>('vi');
-  const [darkMode, setDarkMode] = useState(true); // mặc định theo UI hiện tại
   const [notifStudy, setNotifStudy] = useState(true);
   const [notifMarketing, setNotifMarketing] = useState(false);
-
-  const palette = useMemo<Palette>(() => (darkMode ? THEME.DARK : THEME.LIGHT), [darkMode]);
-  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   // --------- User/Auth state ----------
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -239,14 +184,12 @@ export default function ProfileScreen() {
   // --------- Load settings khi mount ----------
   useEffect(() => {
     (async () => {
-      const [l, d, s, m] = await Promise.all([
+      const [l, s, m] = await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEYS.language),
-        AsyncStorage.getItem(SETTINGS_KEYS.darkMode),
         AsyncStorage.getItem(SETTINGS_KEYS.notifStudy),
         AsyncStorage.getItem(SETTINGS_KEYS.notifMarketing),
       ]);
       if (l === 'vi' || l === 'en') setLanguage(l);
-      if (d !== null) setDarkMode(d === 'true');
       if (s !== null) setNotifStudy(s === 'true');
       if (m !== null) setNotifMarketing(m === 'true');
     })();
@@ -345,7 +288,7 @@ export default function ProfileScreen() {
   if (!firebaseUser || loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size="large" />
           <Text style={{ color: palette.textMuted }}>{t(language, 'loading')}</Text>
@@ -357,7 +300,7 @@ export default function ProfileScreen() {
   if (error || !user) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
           <Text style={{ color: palette.danger }}>{error || t(language, 'errorLoad')}</Text>
           <TouchableOpacity
@@ -374,7 +317,7 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={
@@ -411,7 +354,7 @@ export default function ProfileScreen() {
                   !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' },
                 ]}
               >
-                <Ionicons name="school-outline" size={16} color={THEME.DARK.ionMain} />
+                <Ionicons name="school-outline" size={16} color={palette.ionMain} />
                 <Text style={styles.levelTxt}>{user.level || t(language, 'noClass')}</Text>
               </View>
             </View>
@@ -439,7 +382,7 @@ export default function ProfileScreen() {
             value={String(user.badges?.length || 0)}
             palette={palette}
           />
-          <StatCard
+        <StatCard
             icon="fire"
             color={palette.streak}
             label={t(language, 'streak')}
@@ -499,11 +442,8 @@ export default function ProfileScreen() {
           <SettingSwitch
             icon="moon-outline"
             label={t(language, 'darkMode')}
-            value={darkMode}
-            onValueChange={async (v) => {
-              setDarkMode(v);
-              await persist(SETTINGS_KEYS.darkMode, v);
-            }}
+            value={colorScheme === 'dark'}
+            onValueChange={(v) => setTheme(v ? 'dark' : 'light')}
             palette={palette}
           />
           <SettingPicker
@@ -513,7 +453,7 @@ export default function ProfileScreen() {
             onPress={async () => {
               const next = language === 'vi' ? 'en' : 'vi';
               setLanguage(next);
-              await persist(SETTINGS_KEYS.language, next);
+              await AsyncStorage.setItem(SETTINGS_KEYS.language, next);
               if (firebaseUser) fetchProfile(firebaseUser);
             }}
             palette={palette}
@@ -528,7 +468,7 @@ export default function ProfileScreen() {
             value={notifStudy}
             onValueChange={(v) => {
               setNotifStudy(v);
-              persist(SETTINGS_KEYS.notifStudy, v);
+              AsyncStorage.setItem(SETTINGS_KEYS.notifStudy, String(v));
             }}
             palette={palette}
           />
@@ -538,7 +478,7 @@ export default function ProfileScreen() {
             value={notifMarketing}
             onValueChange={(v) => {
               setNotifMarketing(v);
-              persist(SETTINGS_KEYS.notifMarketing, v);
+              AsyncStorage.setItem(SETTINGS_KEYS.notifMarketing, String(v));
             }}
             palette={palette}
           />

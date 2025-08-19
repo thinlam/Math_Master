@@ -1,4 +1,5 @@
 // app/(tabs)/Practice.tsx
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
@@ -8,6 +9,7 @@ import {
   Image,
   RefreshControl,
   StatusBar,
+  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -46,20 +48,7 @@ type PracticeSet = {
 
 type ProgressDoc = { done?: number; total?: number };
 
-/* ---------- UI Helpers ---------- */
-const COLORS = {
-  bg: '#0B1020',
-  card: '#141A2E',
-  text: '#E6E9F5',
-  sub: '#A7B0C0',
-  chip: '#1E2540',
-  chipActive: '#2F3B71',
-  green: '#22C55E',
-  amber: '#F59E0B',
-  red: '#EF4444',
-  line: '#2A3354',
-};
-
+/* ---------- Const ---------- */
 const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
 const TOPICS = ['Cộng trừ', 'Nhân chia', 'Hình học', 'Đại số', 'Số học', 'Phân số', 'Tư duy'];
 const DIFFS: { key: Difficulty; label: string }[] = [
@@ -68,10 +57,24 @@ const DIFFS: { key: Difficulty; label: string }[] = [
   { key: 'hard', label: 'Khó' },
 ];
 
+/* Màu “tone” riêng cho tag độ khó (cố định nhẹ nhàng, phần còn lại dùng palette) */
+const TONE = {
+  green: '#22C55E',
+  amber: '#F59E0B',
+  red: '#EF4444',
+};
+const TONE_BG = {
+  green: '#0F2B1A',
+  amber: '#2A2108',
+  red: '#2B0F13',
+};
+
 /* ---------- Main Component ---------- */
 export default function PracticeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   /* ---------- Filters ---------- */
   const [grade, setGrade] = useState<number | null>(null);
@@ -104,7 +107,6 @@ export default function PracticeScreen() {
       q = query(colRef, where('published', '==', true), where('grade', '==', grade), orderBy('updatedAt', 'desc'), limit(pageSize));
     }
     if (topic) {
-      // nếu có grade + topic
       if (grade !== null) {
         q = query(
           colRef,
@@ -125,12 +127,11 @@ export default function PracticeScreen() {
       }
     }
     if (diff !== null) {
-      // diff có thể là string/number; lưu dưới field difficulty
-      const baseConstraints: any[] = [where('published', '==', true)];
-      if (grade !== null) baseConstraints.push(where('grade', '==', grade));
-      if (topic) baseConstraints.push(where('topic', '==', topic));
-      baseConstraints.push(where('difficulty', '==', diff));
-      q = query(colRef, ...baseConstraints, orderBy('updatedAt', 'desc'), limit(pageSize));
+      const base: any[] = [where('published', '==', true)];
+      if (grade !== null) base.push(where('grade', '==', grade));
+      if (topic) base.push(where('topic', '==', topic));
+      base.push(where('difficulty', '==', diff));
+      q = query(colRef, ...base, orderBy('updatedAt', 'desc'), limit(pageSize));
     }
     return q;
   }, [grade, topic, diff]);
@@ -149,7 +150,6 @@ export default function PracticeScreen() {
 
         let q = buildQuery();
         if (!first && lastSnapRef.current) {
-          // cần cùng orderBy với query trước
           q = query(q, startAfter(lastSnapRef.current));
         }
 
@@ -182,7 +182,6 @@ export default function PracticeScreen() {
           lastSnapRef.current = snap.docs[snap.docs.length - 1] ?? null;
         }
 
-        // nạp tiến độ cho các item mới (nếu đã đăng nhập)
         const uid = auth.currentUser?.uid;
         if (uid) {
           const entries = await Promise.all(
@@ -222,33 +221,32 @@ export default function PracticeScreen() {
 
   const header = useMemo(
     () => (
-      <View style={{ paddingTop: insets.top + 8, backgroundColor: COLORS.bg }}>
-        <StatusBar barStyle="light-content" />
-        <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-          <Text style={{ color: COLORS.text, fontSize: 22, fontWeight: '700' }}>
-            Luyện tập
-          </Text>
-          <Text style={{ color: COLORS.sub, marginTop: 4 }}>
-            Chọn bộ bài theo lớp, chủ đề và độ khó.
-          </Text>
+      <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <View style={styles.headerTextWrap}>
+          <Text style={styles.headerTitle}>Luyện tập</Text>
+          <Text style={styles.headerSub}>Chọn bộ bài theo lớp, chủ đề và độ khó.</Text>
         </View>
 
         {/* Quick Actions */}
-        <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, marginBottom: 8 }}>
+        <View style={styles.quickRow}>
           <QuickButton
             icon="flash-outline"
             label="Luyện nhanh"
             onPress={() => router.push('/Practice/Quick')}
+            palette={palette}
           />
           <QuickButton
             icon="timer-outline"
             label="Thi tốc độ"
             onPress={() => router.push('/Practice/Speed')}
+            palette={palette}
           />
           <QuickButton
             icon="calendar-outline"
             label="Thử thách ngày"
             onPress={() => router.push('/Practice/Daily')}
+            palette={palette}
           />
         </View>
 
@@ -257,11 +255,13 @@ export default function PracticeScreen() {
           label="Lớp"
           data={GRADES.map((g) => ({ key: String(g), label: `Lớp ${g}`, active: grade === g }))}
           onPress={(k) => setGrade((prev) => (prev === Number(k) ? null : Number(k)))}
+          palette={palette}
         />
         <FilterRow
           label="Chủ đề"
           data={TOPICS.map((t) => ({ key: t, label: t, active: topic === t }))}
           onPress={(k) => setTopic((prev) => (prev === k ? null : k))}
+          palette={palette}
         />
         <FilterRow
           label="Độ khó"
@@ -270,11 +270,12 @@ export default function PracticeScreen() {
             const found = DIFFS.find((d) => String(d.key) === k)?.key ?? null;
             setDiff((prev) => (String(prev) === k ? null : found));
           }}
+          palette={palette}
         />
         <View style={{ height: 8 }} />
       </View>
     ),
-    [insets.top, grade, topic, diff, router]
+    [insets.top, grade, topic, diff, router, styles, palette, colorScheme]
   );
 
   const renderItem = useCallback(
@@ -287,56 +288,48 @@ export default function PracticeScreen() {
       return (
         <TouchableOpacity
           onPress={() => router.push(`/Practice/Set/${item.id}`)}
-          style={{
-            backgroundColor: COLORS.card,
-            marginHorizontal: 16,
-            marginBottom: 12,
-            borderRadius: 16,
-            overflow: 'hidden',
-            borderWidth: 1,
-            borderColor: COLORS.line,
-          }}
-          activeOpacity={0.8}
+          style={styles.card}
+          activeOpacity={0.85}
         >
           <View style={{ flexDirection: 'row' }}>
-            <View style={{ width: 96, height: 96, backgroundColor: '#0F1530' }}>
+            <View style={styles.cover}>
               {item.coverUrl ? (
                 <Image source={{ uri: item.coverUrl }} style={{ width: '100%', height: '100%' }} />
               ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <MaterialCommunityIcons name="shape-outline" size={28} color={COLORS.sub} />
+                  <MaterialCommunityIcons name="shape-outline" size={28} color={palette.textMuted} />
                 </View>
               )}
             </View>
 
             <View style={{ flex: 1, padding: 12 }}>
-              <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '700' }} numberOfLines={1}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
                 {item.title}
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                <Tag text={`Lớp ${item.grade}`} />
-                {!!item.topic && <Tag text={item.topic} />}
-                {!!item.difficulty && <Tag text={diffLabel(item.difficulty)} tone={diffTone(item.difficulty)} />}
+                <Tag text={`Lớp ${item.grade}`} palette={palette} />
+                {!!item.topic && <Tag text={item.topic} palette={palette} />}
+                {!!item.difficulty && <Tag text={diffLabel(item.difficulty)} tone={diffTone(item.difficulty)} palette={palette} />}
               </View>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
-                <View style={{ height: 6, backgroundColor: COLORS.line, borderRadius: 999, flex: 1, overflow: 'hidden' }}>
-                  <View style={{ width: `${ratio * 100}%`, height: '100%', backgroundColor: COLORS.green }} />
+                <View style={{ height: 6, backgroundColor: palette.cardBorder, borderRadius: 999, flex: 1, overflow: 'hidden' }}>
+                  <View style={{ width: `${ratio * 100}%`, height: '100%', backgroundColor: TONE.green }} />
                 </View>
-                <Text style={{ color: COLORS.sub, marginLeft: 8 }}>{done}/{total}</Text>
+                <Text style={{ color: palette.textMuted, marginLeft: 8 }}>{done}/{total}</Text>
               </View>
             </View>
           </View>
         </TouchableOpacity>
       );
     },
-    [progressMap, router]
+    [progressMap, router, styles, palette]
   );
 
   const keyExtractor = useCallback((it: PracticeSet) => it.id, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
+    <View style={{ flex: 1, backgroundColor: palette.bg }}>
       <FlatList
         data={items}
         keyExtractor={keyExtractor}
@@ -345,48 +338,57 @@ export default function PracticeScreen() {
         ListEmptyComponent={
           !loading && (
             <View style={{ alignItems: 'center', marginTop: 48 }}>
-              <Text style={{ color: COLORS.sub }}>Không có dữ liệu phù hợp bộ lọc.</Text>
+              <Text style={{ color: palette.textMuted }}>Không có dữ liệu phù hợp bộ lọc.</Text>
               <TouchableOpacity
-                onPress={() => {
-                  setGrade(null); setTopic(null); setDiff(null);
-                }}
-                style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: COLORS.chip, borderRadius: 999 }}
+                onPress={() => { setGrade(null); setTopic(null); setDiff(null); }}
+                style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: palette.pillBg, borderColor: palette.pillBorder, borderWidth: 1, borderRadius: 999 }}
               >
-                <Text style={{ color: COLORS.text }}>Xóa bộ lọc</Text>
+                <Text style={{ color: palette.text }}>Xóa bộ lọc</Text>
               </TouchableOpacity>
             </View>
           )
         }
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />
         }
         onEndReachedThreshold={0.4}
         onEndReached={() => fetchPage(false)}
         ListFooterComponent={
           (loading || paging) ? (
             <View style={{ paddingVertical: 16 }}>
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={palette.ionMuted} />
             </View>
           ) : !hasMore ? (
             <View style={{ paddingVertical: 16, alignItems: 'center' }}>
-              <Text style={{ color: COLORS.sub }}>Đã hiển thị tất cả</Text>
+              <Text style={{ color: palette.textMuted }}>Đã hiển thị tất cả</Text>
             </View>
           ) : null
         }
+        contentContainerStyle={{ paddingBottom: 24 }}
       />
     </View>
   );
 }
 
 /* ---------- Small Components ---------- */
-function QuickButton({ icon, label, onPress }: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; onPress: () => void }) {
+function QuickButton({
+  icon,
+  label,
+  onPress,
+  palette,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  label: string;
+  onPress: () => void;
+  palette: Palette;
+}) {
   return (
     <TouchableOpacity
       onPress={onPress}
       style={{
         flex: 1,
-        backgroundColor: COLORS.card,
-        borderColor: COLORS.line,
+        backgroundColor: palette.card,
+        borderColor: palette.cardBorder,
         borderWidth: 1,
         borderRadius: 16,
         padding: 12,
@@ -395,8 +397,8 @@ function QuickButton({ icon, label, onPress }: { icon: React.ComponentProps<type
       }}
       activeOpacity={0.85}
     >
-      <Ionicons name={icon} size={20} color={COLORS.text} />
-      <Text style={{ color: COLORS.text, marginTop: 6, fontWeight: '600' }}>{label}</Text>
+      <Ionicons name={icon} size={20} color={palette.text} />
+      <Text style={{ color: palette.text, marginTop: 6, fontWeight: '600' }}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -405,14 +407,16 @@ function FilterRow({
   label,
   data,
   onPress,
+  palette,
 }: {
   label: string;
   data: { key: string; label: string; active?: boolean }[];
   onPress: (key: string) => void;
+  palette: Palette;
 }) {
   return (
     <View style={{ marginBottom: 12 }}>
-      <Text style={{ color: COLORS.sub, paddingHorizontal: 16, marginBottom: 8 }}>{label}</Text>
+      <Text style={{ color: palette.textMuted, paddingHorizontal: 16, marginBottom: 8 }}>{label}</Text>
       <FlatList
         data={data}
         keyExtractor={(it) => it.key}
@@ -420,8 +424,8 @@ function FilterRow({
           <TouchableOpacity
             onPress={() => onPress(item.key)}
             style={{
-              backgroundColor: item.active ? COLORS.chipActive : COLORS.chip,
-              borderColor: COLORS.line,
+              backgroundColor: item.active ? palette.brand : palette.pillBg,
+              borderColor: palette.pillBorder,
               borderWidth: 1,
               paddingHorizontal: 12,
               paddingVertical: 8,
@@ -429,7 +433,14 @@ function FilterRow({
               marginRight: 8,
             }}
           >
-            <Text style={{ color: COLORS.text, fontWeight: item.active ? '700' : '500' }}>{item.label}</Text>
+            <Text
+  style={{
+    color: item.active ? '#FFFFFF' : palette.textFaint,
+    fontWeight: item.active ? '700' : '500',
+  }}
+>
+  {item.label}
+</Text>
           </TouchableOpacity>
         )}
         horizontal
@@ -440,13 +451,19 @@ function FilterRow({
   );
 }
 
-function Tag({ text, tone }: { text: string; tone?: 'green' | 'amber' | 'red' }) {
-  const bg =
-    tone === 'green' ? '#0F2B1A' : tone === 'amber' ? '#2A2108' : tone === 'red' ? '#2B0F13' : COLORS.chip;
-  const color =
-    tone === 'green' ? COLORS.green : tone === 'amber' ? COLORS.amber : tone === 'red' ? COLORS.red : COLORS.text;
+function Tag({
+  text,
+  tone,
+  palette,
+}: {
+  text: string;
+  tone?: 'green' | 'amber' | 'red';
+  palette: Palette;
+}) {
+  const bg = tone ? TONE_BG[tone] : palette.pillBg;
+  const color = tone ? TONE[tone] : palette.text;
   return (
-    <View style={{ backgroundColor: bg, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: COLORS.line }}>
+    <View style={{ backgroundColor: bg, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: palette.cardBorder }}>
       <Text style={{ color, fontSize: 12 }}>{text}</Text>
     </View>
   );
@@ -463,4 +480,28 @@ function diffTone(d: Difficulty): 'green' | 'amber' | 'red' | undefined {
   if (d === 'medium' || d === 2) return 'amber';
   if (d === 'hard' || d === 3) return 'red';
   return undefined;
+}
+
+/* ---------- Styles ---------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    headerWrap: { backgroundColor: p.bg },
+    headerTextWrap: { paddingHorizontal: 16, paddingBottom: 8 },
+    headerTitle: { color: p.text, fontSize: 22, fontWeight: '700' },
+    headerSub: { color: p.textMuted, marginTop: 4 },
+    quickRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, marginBottom: 8 },
+
+    card: {
+      backgroundColor: p.card,
+      marginHorizontal: 16,
+      marginBottom: 12,
+      borderRadius: 16,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+    },
+    cover: { width: 96, height: 96, backgroundColor: p.cardBorder },
+
+    cardTitle: { color: p.text, fontSize: 16, fontWeight: '700' },
+  });
 }

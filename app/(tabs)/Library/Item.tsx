@@ -1,4 +1,4 @@
-// app/(tabs)/library/Item.tsx
+// app/(tabs)/Library/Item.tsx  ← (nên đặt hoa "Library" cho khớp Tab name)
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system';
@@ -12,6 +12,7 @@ import {
     ScrollView,
     Share,
     StatusBar,
+    StyleSheet,
     Text,
     TouchableOpacity,
     View,
@@ -19,6 +20,9 @@ import {
 
 /* docx để xuất Word */
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
+
+/* Theme */
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
 /* Firebase */
 import { auth, db } from '@/scripts/firebase';
@@ -61,6 +65,9 @@ async function ensureSharing() {
 
 export default function LibraryItemScreen() {
   const router = useRouter();
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
+
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(auth?.currentUser ?? null);
@@ -235,28 +242,30 @@ export default function LibraryItemScreen() {
   /* ----- UI states ----- */
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0B1220', alignItems: 'center', justifyContent: 'center' }}>
-        <StatusBar barStyle="light-content" />
-        <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 8, color: '#CBD5E1' }}>Đang tải tài liệu...</Text>
+      <SafeAreaView style={[styles.safe]}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" />
+          <Text style={[styles.muted, { marginTop: 8 }]}>Đang tải tài liệu...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   if (!item) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0B1220' }}>
-        <StatusBar barStyle="light-content" />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <MaterialCommunityIcons name="file-alert-outline" size={40} color="#FCA5A5" />
-          <Text style={{ color: '#FCA5A5', marginTop: 10, textAlign: 'center' }}>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <View style={[styles.center, { padding: 16 }]}>
+          <MaterialCommunityIcons name="file-alert-outline" size={40} color={palette.danger} />
+          <Text style={{ color: palette.danger, marginTop: 10, textAlign: 'center' }}>
             Không tìm thấy tài liệu.
           </Text>
           <TouchableOpacity
-            onPress={() => router.push('/(tabs)/library')}
-            style={{ marginTop: 14, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#93C5FD', borderRadius: 10 }}
+            onPress={() => (/* về tab Library; nếu không back được thì push */ (router as any).canGoBack?.() ? router.back() : router.push('/(tabs)/Library'))}
+            style={[styles.btnBase, { backgroundColor: palette.brandSoft }]}
           >
-            <Text style={{ color: '#111827', fontWeight: '700' }}>Quay lại</Text>
+            <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>Quay lại</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -264,75 +273,57 @@ export default function LibraryItemScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0B1220' }}>
-      <StatusBar barStyle="light-content" />
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
 
       {/* Header */}
-      <View
-        style={{
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          backgroundColor: '#0B1220',
-          borderBottomWidth: 1,
-          borderBottomColor: '#1F2A44',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-        }}
-      >
+      <View style={styles.header}>
         <TouchableOpacity
-          // Quay lại tab Library (chú ý đúng chữ thường "library")
-          onPress={() => router.push('/(tabs)/Library')}
-          style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
+          onPress={() => ((router as any).canGoBack?.() ? router.back() : router.push('/(tabs)/Library'))}
+          style={styles.headerIcon}
         >
-          <Ionicons name="chevron-back" size={22} color="#fff" />
+          <Ionicons name="chevron-back" size={22} color={palette.text} />
         </TouchableOpacity>
 
         <View style={{ flex: 1, gap: 2 }}>
-          <Text numberOfLines={1} style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 16 }}>
+          <Text numberOfLines={1} style={styles.headerTitle}>
             {item.title}
           </Text>
-          <Text numberOfLines={1} style={{ color: '#94A3B8', fontSize: 12 }}>
+          <Text numberOfLines={1} style={styles.headerSub}>
             Lớp {item.grade} • Văn bản
           </Text>
         </View>
 
-        <TouchableOpacity
-          onPress={shareItem}
-          style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
-        >
-          <Ionicons name="share-social-outline" size={18} color="#fff" />
+        <TouchableOpacity onPress={shareItem} style={styles.headerIcon}>
+          <Ionicons name="share-social-outline" size={18} color={palette.text} />
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={toggleFavourite}
-          style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
-        >
-          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? '#F43F5E' : '#fff'} />
+        <TouchableOpacity onPress={toggleFavourite} style={styles.headerIcon}>
+          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? palette.danger : palette.text} />
         </TouchableOpacity>
       </View>
 
       {/* Body */}
       <ScrollView
         contentContainerStyle={{ padding: 14, paddingBottom: 24, gap: 12 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
       >
         {/* Info Card */}
-        <View style={{ backgroundColor: '#0F172A', borderRadius: 16, borderWidth: 1, borderColor: '#1F2A44', padding: 14, gap: 10 }}>
+        <View style={styles.card}>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <View style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' }}>
-              <MaterialCommunityIcons name="file-document-outline" size={28} color="#60A5FA" />
+            <View style={styles.iconSquare}>
+              <MaterialCommunityIcons name="file-document-outline" size={28} color={palette.brandSoft} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 16 }}>{item.title}</Text>
-              {!!item.subtitle && <Text style={{ color: '#9CA3AF', marginTop: 2 }}>{item.subtitle}</Text>}
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#111827', borderWidth: 1, borderColor: '#1F2A44' }}>
-                  <Text style={{ color: '#CBD5E1', fontSize: 12, fontWeight: '600' }}>Lớp {item.grade}</Text>
+              <Text style={styles.title}>{item.title}</Text>
+              {!!item.subtitle && <Text style={styles.sub}>{item.subtitle}</Text>}
+              <View style={styles.tagRow}>
+                <View style={styles.tagPill}>
+                  <Text style={styles.tagText}>Lớp {item.grade}</Text>
                 </View>
                 {!!item.tags?.length &&
                   item.tags.slice(0, 4).map((t, i) => (
-                    <View key={i} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#0B1220', borderWidth: 1, borderColor: '#1F2A44' }}>
-                      <Text style={{ color: '#93C5FD', fontSize: 12, fontWeight: '600' }}>#{t}</Text>
+                    <View key={i} style={[styles.tagPill, { backgroundColor: palette.bg, borderColor: palette.cardBorder }]}>
+                      <Text style={[styles.tagText, { color: palette.link }]}>#{t}</Text>
                     </View>
                   ))}
               </View>
@@ -341,57 +332,25 @@ export default function LibraryItemScreen() {
 
           {/* Actions */}
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
-            <TouchableOpacity
-              onPress={copyContent}
-              style={{
-                flex: 1,
-                backgroundColor: '#93C5FD',
-                borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: 'center',
-                flexDirection: 'row',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <Ionicons name="copy-outline" size={18} color="#111827" />
-              <Text style={{ color: '#111827', fontWeight: '800' }}>Sao chép nội dung</Text>
+            <TouchableOpacity onPress={copyContent} style={[styles.actionBtn, { backgroundColor: palette.brandSoft }]}>
+              <Ionicons name="copy-outline" size={18} color={palette.editBtnText} />
+              <Text style={[styles.actionText, { color: palette.editBtnText }]}>Sao chép nội dung</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={downloadWord}
-              style={{
-                flex: 1,
-                backgroundColor: '#34D399',
-                borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: 'center',
-                flexDirection: 'row',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
+            <TouchableOpacity onPress={downloadWord} style={[styles.actionBtn, { backgroundColor: '#34D399', borderColor: '#34D399' }]}>
               <Ionicons name="download-outline" size={18} color="#111827" />
-              <Text style={{ color: '#111827', fontWeight: '800' }}>Tải về (Word)</Text>
+              <Text style={[styles.actionText, { color: '#111827' }]}>Tải về (Word)</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Content */}
-        <View style={{ backgroundColor: '#0F172A', borderRadius: 16, borderWidth: 1, borderColor: '#1F2A44', padding: 16 }}>
+        <View style={styles.contentCard}>
           {paragraphs.length === 0 ? (
-            <Text style={{ color: '#94A3B8', fontStyle: 'italic' }}>— Không có nội dung —</Text>
+            <Text style={[styles.sub, { fontStyle: 'italic' }]}>— Không có nội dung —</Text>
           ) : (
             paragraphs.map((p, idx) => (
-              <Text
-                key={idx}
-                style={{
-                  color: '#E5E7EB',
-                  fontSize: 16,
-                  lineHeight: 24,
-                  marginBottom: 12,
-                }}
-              >
+              <Text key={idx} style={styles.contentText}>
                 {p}
               </Text>
             ))
@@ -400,4 +359,96 @@ export default function LibraryItemScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+/* ---------------- Styles theo theme ---------------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: p.bg },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+    header: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: p.bg,
+      borderBottomWidth: 1,
+      borderBottomColor: p.cardBorder,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    headerIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: `${p.text}${p.statIconBgAlpha}`,
+    },
+    headerTitle: { color: p.text, fontWeight: '800', fontSize: 16 },
+    headerSub: { color: p.textMuted, fontSize: 12 },
+
+    btnBase: {
+      marginTop: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    card: {
+      backgroundColor: p.card,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      padding: 14,
+      gap: 10,
+    },
+    iconSquare: {
+      width: 48,
+      height: 48,
+      borderRadius: 12,
+      backgroundColor: p.pillBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    title: { color: p.text, fontWeight: '800', fontSize: 16 },
+    sub: { color: p.textMuted, marginTop: 2 },
+
+    tagRow: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
+    tagPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: p.pillBg,
+      borderWidth: 1,
+      borderColor: p.pillBorder,
+    },
+    tagText: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
+
+    actionBtn: {
+      flex: 1,
+      borderRadius: 12,
+      paddingVertical: 12,
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+    },
+    actionText: { fontWeight: '800' },
+
+    contentCard: {
+      backgroundColor: p.card,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      padding: 16,
+    },
+    contentText: { color: p.text, fontSize: 16, lineHeight: 24, marginBottom: 12 },
+
+    muted: { color: p.textMuted },
+  });
 }

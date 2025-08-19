@@ -11,12 +11,16 @@ import {
   Platform,
   ScrollView,
   StatusBar,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+/* Theme */
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
 /* Firebase (Firestore + Auth) */
 import { auth, db } from '@/scripts/firebase';
@@ -27,7 +31,7 @@ import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 const CLOUD_NAME = 'djf9vnngm';                  // đổi theo cloud của bạn
 const UPLOAD_PRESET = 'upload_avatars_unsigned'; // preset unsigned cho avatar
 const CLOUD_FOLDER = 'avatars';                  // thư mục lưu avatar
-const USE_FIXED_PUBLIC_ID = false;               // true = dùng 'avatar_<uid>' (cần bật Overwrite + Unique filename=false)
+const USE_FIXED_PUBLIC_ID = false;               // true = dùng 'avatar_<uid>'
 
 /* ---------- UI constants ---------- */
 const LEVELS = Array.from({ length: 12 }, (_, i) => `Lớp ${i + 1}`);
@@ -35,6 +39,8 @@ const LEVELS = Array.from({ length: 12 }, (_, i) => `Lớp ${i + 1}`);
 export default function EditProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const [user, setUser] = useState<User | null>(auth?.currentUser ?? null);
   const [loading, setLoading] = useState(true);
@@ -103,7 +109,6 @@ export default function EditProfileScreen() {
 
   /** Upload ảnh lên Cloudinary, trả về secure_url */
   const uploadAvatarToCloudinary = async (uri: string, publicId?: string): Promise<string> => {
-    // Không set Content-Type để RN tự thêm boundary cho multipart/form-data
     const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
     const rnFile: any = { uri, name: `avatar.${ext}`, type: 'image/jpeg' };
 
@@ -142,11 +147,9 @@ export default function EditProfileScreen() {
       // Nếu có chọn ảnh mới → upload Cloudinary
       if (localAvatar) {
         if (USE_FIXED_PUBLIC_ID) {
-          // YÊU CẦU preset: Unique filename=false + Overwrite=true
           const publicId = `avatar_${user.uid}`;
           newPhotoURL = await uploadAvatarToCloudinary(localAvatar, publicId);
         } else {
-          // Mỗi lần 1 URL mới → tránh cache, không cần Overwrite
           newPhotoURL = await uploadAvatarToCloudinary(localAvatar);
         }
         setPhotoURL(newPhotoURL);
@@ -188,71 +191,40 @@ export default function EditProfileScreen() {
 
   if (loading) {
     return (
-      <View
-        style={{
-          flex: 1,
-          paddingTop: insets.top + 16,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: '#0B1220',
-        }}
-      >
-        <StatusBar barStyle="light-content" />
+      <View style={[styles.fill, { paddingTop: insets.top + 16 }]}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12, opacity: 0.7, color: '#fff' }}>Đang tải hồ sơ...</Text>
+        <Text style={[styles.loadingText, { marginTop: 12 }]}>Đang tải hồ sơ...</Text>
       </View>
     );
   }
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: '#0B1220' }}
+      style={{ flex: 1, backgroundColor: palette.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+
       {/* Header */}
-      <View
-        style={{
-          paddingTop: insets.top + 8,
-          paddingBottom: 12,
-          paddingHorizontal: 16,
-          backgroundColor: '#0B1220',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-        }}
-      >
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 12,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(255,255,255,0.06)',
-          }}
-        >
-          <Ionicons name="chevron-back" size={22} color="#fff" />
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+          <Ionicons name="chevron-back" size={22} color={palette.text} />
         </TouchableOpacity>
-        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Chỉnh sửa hồ sơ</Text>
+        <Text style={styles.headerTitle}>Chỉnh sửa hồ sơ</Text>
         <View style={{ flex: 1 }} />
         <TouchableOpacity
           disabled={saving || !hasChanges}
           onPress={handleSave}
-          style={{
-            paddingHorizontal: 16,
-            height: 40,
-            borderRadius: 12,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: saving || !hasChanges ? 'rgba(255,255,255,0.15)' : '#5B9EFF',
-          }}
+          style={[
+            styles.saveBtn,
+            { backgroundColor: saving || !hasChanges ? `${palette.text}${palette.statIconBgAlpha}` : palette.brandSoft },
+          ]}
         >
           {saving ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={palette.editBtnText} />
           ) : (
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Lưu</Text>
+            <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>Lưu</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -270,7 +242,7 @@ export default function EditProfileScreen() {
                   ? { uri: `${photoURL}?t=${imgVersion}` } // cache-buster
                   : require('@/assets/images/icon.png')
               }
-              style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: '#151B2B' }}
+              style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: palette.cardBorder }}
               resizeMode="cover"
             />
             <View
@@ -281,56 +253,38 @@ export default function EditProfileScreen() {
                 width: 36,
                 height: 36,
                 borderRadius: 18,
-                backgroundColor: '#5B9EFF',
+                backgroundColor: palette.brandSoft,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderWidth: 3,
-                borderColor: '#0B1220',
+                borderColor: palette.bg,
               }}
             >
-              <Ionicons name="camera" size={18} color="#fff" />
+              <Ionicons name="camera" size={18} color={palette.editBtnText} />
             </View>
           </TouchableOpacity>
-          <Text style={{ color: '#AAB2C8', marginTop: 8 }}>Nhấn để đổi ảnh đại diện</Text>
+          <Text style={{ color: palette.textMuted, marginTop: 8 }}>Nhấn để đổi ảnh đại diện</Text>
         </View>
 
         {/* Email (read-only) */}
         <View style={{ marginBottom: 14 }}>
-          <Text style={{ color: '#AAB2C8', marginBottom: 8 }}>Email</Text>
-          <View
-            style={{
-              height: 48,
-              borderRadius: 14,
-              paddingHorizontal: 14,
-              backgroundColor: '#151B2B',
-              justifyContent: 'center',
-            }}
-          >
-            <Text style={{ color: '#95A0B8' }}>{email || user?.email || '—'}</Text>
+          <Text style={{ color: palette.textMuted, marginBottom: 8 }}>Email</Text>
+          <View style={[styles.inputReadonly, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}>
+            <Text style={{ color: palette.textFaint }}>{email || user?.email || '—'}</Text>
           </View>
         </View>
 
         {/* Họ & Tên */}
         <View style={{ marginBottom: 14 }}>
-          <Text style={{ color: '#AAB2C8', marginBottom: 8 }}>Họ & Tên</Text>
-          <View
-            style={{
-              height: 52,
-              borderRadius: 14,
-              paddingHorizontal: 14,
-              backgroundColor: '#151B2B',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <Ionicons name="person" size={18} color="#7F8AA8" />
+          <Text style={{ color: palette.textMuted, marginBottom: 8 }}>Họ & Tên</Text>
+          <View style={[styles.inputWrap, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}>
+            <Ionicons name="person" size={18} color={palette.textMuted} />
             <TextInput
               placeholder="Nhập họ tên"
-              placeholderTextColor="#5E6A88"
+              placeholderTextColor={palette.textMuted}
               value={name}
               onChangeText={setName}
-              style={{ color: '#fff', flex: 1, fontSize: 16 }}
+              style={{ color: palette.text, flex: 1, fontSize: 16 }}
               autoCapitalize="words"
               returnKeyType="done"
             />
@@ -339,7 +293,7 @@ export default function EditProfileScreen() {
 
         {/* Chọn Lớp */}
         <View style={{ marginBottom: 8 }}>
-          <Text style={{ color: '#AAB2C8', marginBottom: 8 }}>Lớp hiện tại</Text>
+          <Text style={{ color: palette.textMuted, marginBottom: 8 }}>Lớp hiện tại</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               {LEVELS.map((lv) => {
@@ -352,14 +306,14 @@ export default function EditProfileScreen() {
                       paddingHorizontal: 14,
                       height: 40,
                       borderRadius: 20,
-                      borderWidth: active ? 0 : 1,
-                      borderColor: '#1F2740',
-                      backgroundColor: active ? '#5B9EFF' : '#151B2B',
+                      borderWidth: active ? 1 : 1,
+                      borderColor: active ? palette.brandSoft : palette.cardBorder,
+                      backgroundColor: active ? palette.brandSoft : palette.card,
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
                   >
-                    <Text style={{ color: active ? '#fff' : '#AAB2C8', fontWeight: active ? '700' : '500' }}>
+                    <Text style={{ color: active ? palette.editBtnText : palette.textFaint, fontWeight: active ? '700' : '500' }}>
                       {lv}
                     </Text>
                   </TouchableOpacity>
@@ -369,10 +323,60 @@ export default function EditProfileScreen() {
           </ScrollView>
         </View>
 
-        <Text style={{ color: '#6E7A99', marginTop: 6 }}>
+        <Text style={{ color: palette.textMuted, marginTop: 6 }}>
           Chọn đúng lớp để hệ thống gợi ý bài học phù hợp.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+/* ---------------- Styles theo theme ---------------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    fill: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: p.bg },
+    header: {
+      paddingBottom: 12,
+      paddingHorizontal: 16,
+      backgroundColor: p.bg,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    headerBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: `${p.text}${p.statIconBgAlpha}`,
+    },
+    headerTitle: { color: p.text, fontSize: 18, fontWeight: '700' },
+    saveBtn: {
+      paddingHorizontal: 16,
+      height: 40,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    inputReadonly: {
+      height: 48,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      justifyContent: 'center',
+      borderWidth: 1,
+    },
+    inputWrap: {
+      height: 52,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+    },
+
+    loadingText: { color: p.text },
+  });
 }

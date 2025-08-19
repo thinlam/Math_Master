@@ -1,5 +1,6 @@
 // app/(tabs)/Learning/Learn.tsx
 import { db } from '@/scripts/firebase';
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -23,6 +24,7 @@ import {
   Image,
   RefreshControl,
   StatusBar,
+  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -63,6 +65,8 @@ const PAGE_SIZE = 12;
 export default function LearnScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const [grade, setGrade] = useState<number | null>(null);
   const [items, setItems] = useState<Lesson[]>([]);
@@ -71,7 +75,7 @@ export default function LearnScreen() {
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
 
-  // ✅ Chỉ đọc lớp từ AsyncStorage mỗi lần focus (không replace route)
+  // ✅ đọc lớp từ AsyncStorage khi màn hình focus
   const resolveGrade = useCallback(async () => {
     try {
       const stored = await AsyncStorage.getItem('selectedGrade');
@@ -167,16 +171,22 @@ export default function LearnScreen() {
   }, [router]);
 
   return (
-    <View style={{ flex: 1, paddingTop: Math.max(insets.top, StatusBar.currentHeight ?? 0), backgroundColor: '#0b0b0c' }}>
+    <View style={[styles.screen, { paddingTop: Math.max(insets.top, StatusBar.currentHeight ?? 0) }]}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+
       {/* Header */}
-      <View style={{ paddingHorizontal: 16, paddingBottom: 12, flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 4, marginRight: 8 }}>
-          <Ionicons name="close" size={26} color="#60a5fa" />
+      <View style={styles.headerRow}>
+        <TouchableOpacity
+          onPress={handleClose}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.headerIconBtn}
+        >
+          <Ionicons name="close" size={26} color={palette.brandSoft} />
         </TouchableOpacity>
 
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={{ color: 'white', fontSize: 22, fontWeight: '700' }}>Học theo lớp</Text>
-          <Text style={{ color: '#9aa0a6', marginTop: 4 }}>
+          <Text style={styles.headerTitle}>Học theo lớp</Text>
+          <Text style={styles.headerSub}>
             {grade == null ? 'Đang xác định lớp…' : `Lớp ${grade} • Bắt đầu luyện tập`}
           </Text>
         </View>
@@ -184,26 +194,17 @@ export default function LearnScreen() {
         <TouchableOpacity
           onPress={() => router.push('/(tabs)')}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          style={{
-            paddingHorizontal: 10,
-            height: 30,
-            borderRadius: 999,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: '#1f2937',
-            borderWidth: 1,
-            borderColor: '#374151',
-          }}
+          style={styles.changeBtn}
         >
-          <Text style={{ color: '#cbd5e1', fontSize: 12, fontWeight: '600' }}>Đổi lớp</Text>
+          <Text style={styles.changeBtnText}>Đổi lớp</Text>
         </TouchableOpacity>
       </View>
 
       {/* List */}
       {grade == null || loading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={styles.centerWrap}>
           <ActivityIndicator />
-          <Text style={{ color: '#9aa0a6', marginTop: 8 }}>
+          <Text style={styles.loadingText}>
             {grade == null ? 'Đang tải lớp…' : 'Đang tải bài học…'}
           </Text>
         </View>
@@ -212,19 +213,19 @@ export default function LearnScreen() {
           data={items}
           keyExtractor={(it) => it.id}
           contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 24 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#999" />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
           onEndReachedThreshold={0.4}
           onEndReached={fetchNextPage}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', marginTop: 40 }}>
-              <Ionicons name="cloud-offline-outline" size={36} color="#9aa0a6" />
-              <Text style={{ color: '#cbd5e1', fontSize: 16, marginTop: 6 }}>Chưa có bài cho lớp này</Text>
-              <Text style={{ color: '#9aa0a6', marginTop: 4, textAlign: 'center' }}>
+              <Ionicons name="cloud-offline-outline" size={36} color={palette.ionMuted} />
+              <Text style={[styles.emptyTitle]}>Chưa có bài cho lớp này</Text>
+              <Text style={[styles.emptySub, { textAlign: 'center' }]}>
                 Vui lòng quay lại trang chủ để đổi lớp khác hoặc kéo để làm mới.
               </Text>
             </View>
           }
-          renderItem={({ item }) => <LessonCard lesson={item} onPress={() => onPressLesson(item)} />}
+          renderItem={({ item }) => <LessonCard lesson={item} onPress={() => onPressLesson(item)} palette={palette} />}
           ListFooterComponent={
             hasMore ? (
               <View style={{ paddingVertical: 16, alignItems: 'center' }}>
@@ -238,7 +239,15 @@ export default function LearnScreen() {
   );
 }
 
-function LessonCard({ lesson, onPress }: { lesson: Lesson; onPress: () => void }) {
+function LessonCard({
+  lesson,
+  onPress,
+  palette,
+}: {
+  lesson: Lesson;
+  onPress: () => void;
+  palette: Palette;
+}) {
   const diffLabel = React.useMemo(() => {
     const d = lesson.difficulty;
     if (d === 'easy' || d === 1) return 'Dễ';
@@ -250,47 +259,36 @@ function LessonCard({ lesson, onPress }: { lesson: Lesson; onPress: () => void }
   const updated = lesson.updatedAt?.toDate ? lesson.updatedAt.toDate() : null;
 
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={{
-        backgroundColor: '#111827',
-        borderRadius: 16,
-        padding: 12,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: '#1f2937',
-      }}
-      activeOpacity={0.8}
-    >
+    <TouchableOpacity onPress={onPress} style={[cardStyles.card(palette)]} activeOpacity={0.8}>
       <View style={{ flexDirection: 'row' }}>
-        <View style={{ width: 88, height: 88, borderRadius: 12, overflow: 'hidden', backgroundColor: '#0b0f1a', borderWidth: 1, borderColor: '#1f2937' }}>
+        <View style={cardStyles.thumb(palette)}>
           {lesson.coverUrl ? (
             <Image source={{ uri: lesson.coverUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
           ) : (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="school-outline" size={28} color="#9aa0a6" />
+              <Ionicons name="school-outline" size={28} color={palette.ionMuted} />
             </View>
           )}
         </View>
 
         <View style={{ flex: 1, marginLeft: 12, justifyContent: 'space-between' }}>
           <View>
-            <Text numberOfLines={2} style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
+            <Text numberOfLines={2} style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>
               {lesson.title}
             </Text>
-            <Text style={{ color: '#9aa0a6', marginTop: 4 }}>
+            <Text style={{ color: palette.textMuted, marginTop: 4 }}>
               Lớp {lesson.grade} {lesson.unit ? `• ${lesson.unit}` : ''}
             </Text>
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-            <Badge icon="barbell-outline" label={`Độ khó: ${diffLabel}`} />
+            <Badge icon="barbell-outline" label={`Độ khó: ${diffLabel}`} palette={palette} />
             <View style={{ width: 8 }} />
-            <Badge icon="help-circle-outline" label={`${lesson.questionCount ?? 0} câu`} />
+            <Badge icon="help-circle-outline" label={`${lesson.questionCount ?? 0} câu`} palette={palette} />
             {updated ? (
               <>
                 <View style={{ width: 8 }} />
-                <Badge icon="time-outline" label={fmtDate(updated)} />
+                <Badge icon="time-outline" label={fmtDate(updated)} palette={palette} />
               </>
             ) : null}
           </View>
@@ -303,25 +301,27 @@ function LessonCard({ lesson, onPress }: { lesson: Lesson; onPress: () => void }
 function Badge({
   icon,
   label,
+  palette,
 }: {
   icon: React.ComponentProps<typeof Ionicons>['name'];
   label: string;
+  palette: Palette;
 }) {
   return (
     <View
       style={{
         flexDirection: 'row',
-        backgroundColor: '#0b0f1a',
+        backgroundColor: palette.pillBg,
         borderRadius: 999,
         paddingHorizontal: 10,
         height: 28,
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#1f2937',
+        borderColor: palette.pillBorder,
       }}
     >
-      <Ionicons name={icon} size={14} color="#9aa0a6" style={{ marginRight: 6 }} />
-      <Text style={{ color: '#cbd5e1', fontSize: 12, fontWeight: '600' }}>{label}</Text>
+      <Ionicons name={icon} size={14} color={palette.ionMuted} style={{ marginRight: 6 }} />
+      <Text style={{ color: palette.textFaint, fontSize: 12, fontWeight: '600' }}>{label}</Text>
     </View>
   );
 }
@@ -329,11 +329,65 @@ function Badge({
 function fmtDate(d: Date) {
   try {
     const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1) + '';
-    const mm2 = mm.padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
     const yyyy = d.getFullYear();
-    return `${dd}/${mm2}/${yyyy}`;
+    return `${dd}/${mm}/${yyyy}`;
   } catch {
     return '';
   }
 }
+
+/* ---------------- Styles ---------------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: p.bg },
+    headerRow: {
+      paddingHorizontal: 16,
+      paddingBottom: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: p.bg,
+    },
+    headerIconBtn: { padding: 4, marginRight: 8 },
+    headerTitle: { color: p.text, fontSize: 22, fontWeight: '700' },
+    headerSub: { color: p.textMuted, marginTop: 4 },
+    changeBtn: {
+      paddingHorizontal: 10,
+      height: 30,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: p.cardBorder,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+    },
+    changeBtnText: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
+    centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    loadingText: { color: p.textMuted, marginTop: 8 },
+
+    emptyTitle: { color: p.text, fontSize: 16, marginTop: 6, fontWeight: '600' },
+    emptySub: { color: p.textMuted, marginTop: 4 },
+  });
+}
+
+const cardStyles = {
+  card: (p: Palette) =>
+    ({
+      backgroundColor: p.card,
+      borderRadius: 16,
+      padding: 12,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+    } as const),
+  thumb: (p: Palette) =>
+    ({
+      width: 88,
+      height: 88,
+      borderRadius: 12,
+      overflow: 'hidden',
+      backgroundColor: p.bg,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+    } as const),
+};

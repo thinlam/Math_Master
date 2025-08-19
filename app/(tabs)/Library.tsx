@@ -1,3 +1,4 @@
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -63,19 +64,6 @@ const TYPE_ICON: Record<
   link: 'link-variant',
 };
 
-/* ---------- Dark Palette (giống ảnh) ---------- */
-const COLORS = {
-  bg: '#0F172A',       // slate-900
-  card: '#111827',     // gray-900
-  ink: '#F8FAFC',      // slate-50
-  sub: '#94A3B8',      // slate-400
-  border: '#1F2937',   // slate-800
-  chipBg: '#334155',   // slate-700
-  chipText: '#E2E8F0', // slate-200
-  primary: '#3B82F6',  // blue-500
-  mute: '#64748B',     // slate-500
-};
-
 const RADIUS = { lg: 16, md: 12, pill: 999 };
 
 /* ---------- Helper: Debounce ---------- */
@@ -92,6 +80,8 @@ function useDebounced<T>(value: T, delay = 350) {
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +106,9 @@ export default function LibraryScreen() {
     // Nếu có field `keywords` (lowercase title + tags) có thể bật:
     // if (debouncedQ) parts.push(where('keywords', 'array-contains', debouncedQ));
 
-    parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
+    parts.push(
+      orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc')
+    );
     parts.push(limit(PAGE_SIZE));
 
     // @ts-ignore
@@ -210,7 +202,7 @@ export default function LibraryScreen() {
     return (
       <TouchableOpacity onPress={goDetail} activeOpacity={0.9} style={styles.card}>
         <View style={styles.cardIcon}>
-          <MaterialCommunityIcons name={iconName} size={28} color={COLORS.ink} />
+          <MaterialCommunityIcons name={iconName} size={28} color={palette.text} />
         </View>
 
         <View style={{ flex: 1 }}>
@@ -230,14 +222,14 @@ export default function LibraryScreen() {
           )}
         </View>
 
-        <Ionicons name="chevron-forward" size={20} color={COLORS.mute} />
+        <Ionicons name="chevron-forward" size={20} color={palette.ionMuted} />
       </TouchableOpacity>
     );
-  }, [router]);
+  }, [router, styles, palette]);
 
   const keyExtractor = useCallback((it: LibraryItem) => it.id, []);
 
-  /* ---------- Header: Title + Type filter + Search + Grade chips ---------- */
+  /* ---------- Header ---------- */
   const ListHeader = useMemo(() => {
     return (
       <View style={[styles.headerWrap, { paddingTop: insets.top + 4 }]}>
@@ -248,42 +240,17 @@ export default function LibraryScreen() {
             onPress={() => setSortBy(s => (s === 'updatedAt' ? 'title' : 'updatedAt'))}
             style={styles.sortBtn}
           >
-            <Ionicons name="swap-vertical" size={18} color={COLORS.ink} />
+            <Ionicons name="swap-vertical" size={18} color={palette.text} />
             <Text style={styles.sortText}>{sortBy === 'updatedAt' ? 'Mới nhất' : 'A → Z'}</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Type filter chips
-        <View style={styles.modeRow}>
-          {(['Tất cả', ...TYPES] as const).map((label, i) => {
-            const isAll = label === 'Tất cả';
-            const active = isAll ? typeFilter === null : typeFilter === label;
-            const text = isAll
-              ? 'Tất cả'
-              : label === 'pdf' ? 'PDF'
-              : label === 'video' ? 'Video'
-              : label === 'exercise' ? 'Bài tập'
-              : label === 'note' ? 'Ghi chú'
-              : 'Link';
-            return (
-              <TouchableOpacity
-                key={i}
-                onPress={() => setTypeFilter(isAll ? null : (label as LibraryItem['type']))}
-                style={[styles.modeChip, { backgroundColor: active ? COLORS.primary : COLORS.chipBg }]}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.modeText, { color: active ? '#FFFFFF' : COLORS.chipText }]}>{text}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View> */}
-
         {/* Search */}
         <View style={styles.searchBox}>
-          <Ionicons name="search" size={18} color={COLORS.mute} />
+          <Ionicons name="search" size={18} color={palette.ionMuted} />
           <TextInput
             placeholder="Tìm tài liệu, tag, chủ đề…"
-            placeholderTextColor={COLORS.mute}
+            placeholderTextColor={palette.ionMuted}
             value={queryText}
             onChangeText={setQueryText}
             style={styles.searchInput}
@@ -291,7 +258,7 @@ export default function LibraryScreen() {
           />
           {!!queryText && (
             <TouchableOpacity onPress={() => setQueryText('')}>
-              <Ionicons name="close-circle" size={18} color={COLORS.mute} />
+              <Ionicons name="close-circle" size={18} color={palette.ionMuted} />
             </TouchableOpacity>
           )}
         </View>
@@ -308,9 +275,9 @@ export default function LibraryScreen() {
             return (
               <TouchableOpacity
                 onPress={() => setGrade(prev => (prev === g ? null : g))}
-                style={[styles.gradeChip, { backgroundColor: active ? COLORS.primary : COLORS.chipBg }]}
+                style={[styles.gradeChip, { backgroundColor: active ? palette.brand : palette.pillBg, borderColor: palette.pillBorder }]}
               >
-                <Text style={[styles.gradeText, { color: active ? '#FFFFFF' : COLORS.chipText }]}>
+                <Text style={[styles.gradeText, { color: active ? '#FFFFFF' : palette.textFaint }]}>
                   Lớp {g}
                 </Text>
               </TouchableOpacity>
@@ -321,42 +288,42 @@ export default function LibraryScreen() {
         />
       </View>
     );
-  }, [insets.top, queryText, grade, sortBy, typeFilter]);
+  }, [insets.top, queryText, grade, sortBy, typeFilter, styles, palette]);
 
   /* ---------- Empty / Footer ---------- */
   const ListEmpty = useCallback(() => (
     <View style={styles.emptyWrap}>
       {loading ? (
-        <ActivityIndicator color={COLORS.mute} />
+        <ActivityIndicator color={palette.ionMuted} />
       ) : (
         <>
-          <Ionicons name="book-outline" size={42} color={COLORS.mute} />
+          <Ionicons name="book-outline" size={42} color={palette.ionMuted} />
           <Text style={styles.emptyText}>Không có tài liệu phù hợp</Text>
         </>
       )}
     </View>
-  ), [loading]);
+  ), [loading, styles, palette]);
 
   const ListFooter = useCallback(() => {
     if (loading && items.length === 0) return null;
     if (!hasMore) return <View style={{ height: 24 }} />;
     return (
       <View style={{ paddingVertical: 16 }}>
-        <ActivityIndicator color={COLORS.mute} />
+        <ActivityIndicator color={palette.ionMuted} />
       </View>
     );
-  }, [loading, hasMore, items.length]);
+  }, [loading, hasMore, items.length, palette]);
 
   /* ---------- Render ---------- */
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
       <View style={styles.container}>
         <FlatList
           data={items}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.mute} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
           onEndReachedThreshold={0.3}
           onEndReached={loadMore}
           ListHeaderComponent={ListHeader}
@@ -369,94 +336,86 @@ export default function LibraryScreen() {
   );
 }
 
-/* ---------- Styles ---------- */
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  container: { flex: 1, backgroundColor: COLORS.bg },
+/* ---------- Styles theo theme ---------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: p.bg },
+    container: { flex: 1, backgroundColor: p.bg },
 
-  headerWrap: { backgroundColor: COLORS.bg, paddingBottom: 8 },
-  titleRow: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  title: { fontSize: 24, fontWeight: '800', color: COLORS.ink, flex: 1 },
-  sortBtn: { flexDirection: 'row', alignItems: 'center', padding: 8 },
-  sortText: { marginLeft: 6, color: COLORS.ink, fontWeight: '600' },
+    headerWrap: { backgroundColor: p.bg, paddingBottom: 8 },
+    titleRow: {
+      paddingHorizontal: 16,
+      paddingBottom: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    title: { fontSize: 24, fontWeight: '800', color: p.text, flex: 1 },
+    sortBtn: { flexDirection: 'row', alignItems: 'center', padding: 8 },
+    sortText: { marginLeft: 6, color: p.text, fontWeight: '600' },
 
-  /* Type filter row */
-  modeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  modeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: RADIUS.pill,
-    backgroundColor: COLORS.chipBg,
-  },
-  modeText: { fontWeight: '700' },
+    // search
+    searchBox: {
+      marginHorizontal: 16,
+      marginBottom: 8,
+      borderRadius: RADIUS.md,
+      backgroundColor: p.cardBorder,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      height: 44,
+    },
+    searchInput: { flex: 1, marginLeft: 8, color: p.text },
 
-  searchBox: {
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderRadius: RADIUS.md,
-    backgroundColor: '#1F2937', // slate-800
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    height: 44,
-  },
-  searchInput: { flex: 1, marginLeft: 8, color: COLORS.ink },
+    gradeList: { paddingHorizontal: 12, paddingVertical: 6 },
+    gradeChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: RADIUS.pill,
+      marginHorizontal: 4,
+      borderWidth: 1,
+    },
+    gradeText: { fontWeight: '700' },
 
-  gradeList: { paddingHorizontal: 12, paddingVertical: 6 },
-  gradeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: RADIUS.pill,
-    marginHorizontal: 4,
-  },
-  gradeText: { fontWeight: '700' },
+    // card
+    card: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      backgroundColor: p.card,
+      borderRadius: RADIUS.lg,
+      marginHorizontal: 16,
+      marginVertical: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: p.cardBorder,
+      elevation: 0,
+    },
+    cardIcon: {
+      width: 54,
+      height: 54,
+      borderRadius: 14,
+      backgroundColor: p.cardBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    cardTitle: { fontSize: 16, fontWeight: '700', color: p.text },
+    cardSub: { fontSize: 13, color: p.textMuted, marginTop: 2 },
 
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.lg,
-    marginHorizontal: 16,
-    marginVertical: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
-    elevation: 0, // bỏ bóng trên dark
-  },
-  cardIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 14,
-    backgroundColor: '#1F2937', // slate-800
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: COLORS.ink },
-  cardSub: { fontSize: 13, color: COLORS.sub, marginTop: 2 },
+    // tags
+    tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
+    tagChip: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      backgroundColor: p.pillBg,
+      borderRadius: RADIUS.pill,
+      marginRight: 6,
+      marginBottom: 6,
+      borderWidth: 1,
+      borderColor: p.pillBorder,
+    },
+    tagText: { fontSize: 11, color: p.textFaint, fontWeight: '600' },
 
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
-  tagChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: COLORS.chipBg,
-    borderRadius: RADIUS.pill,
-    marginRight: 6,
-    marginBottom: 6,
-  },
-  tagText: { fontSize: 11, color: COLORS.chipText, fontWeight: '600' },
-
-  emptyWrap: { alignItems: 'center', paddingTop: 48 },
-  emptyText: { color: COLORS.sub, marginTop: 8 },
-});
+    emptyWrap: { alignItems: 'center', paddingTop: 48 },
+    emptyText: { color: p.textMuted, marginTop: 8 },
+  });
+}

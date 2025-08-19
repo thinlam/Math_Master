@@ -1,9 +1,20 @@
+// app/(tabs)/Learnning/Lesson/[id].tsx (hoặc đúng path bạn đang dùng)
 import { db } from '@/scripts/firebase';
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Option = { id: string; text: string; correct?: boolean };
@@ -25,9 +36,14 @@ type LessonDoc = {
   questions?: Question[]; createdAt?: Timestamp | null; updatedAt?: Timestamp | null;
 };
 
+const SUCCESS = '#10B981';
+
 export default function LessonDetail() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const [loading, setLoading] = useState(true);
   const [lesson, setLesson] = useState<(LessonDoc & { id: string }) | null>(null);
@@ -35,23 +51,23 @@ export default function LessonDetail() {
   const [answers, setAnswers] = useState<Record<string, string | null>>({});
   const [submitted, setSubmitted] = useState(false);
 
+  const fetchLesson = useCallback(async () => {
+    setLoading(true);
+    const snap = await getDoc(doc(db, 'lessons', String(id)));
+    const data = snap.exists() ? ({ id: snap.id, ...(snap.data() as LessonDoc) }) : null;
+    setLesson(data);
+    const init: Record<string, string | null> = {};
+    (data?.questions ?? []).forEach(q => { init[q.id] = null; });
+    setAnswers(init);
+    setSubmitted(false);
+    setLoading(false);
+  }, [id]);
+
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      setLoading(true);
-      const snap = await getDoc(doc(db, 'lessons', String(id)));
-      if (mounted) {
-        const data = snap.exists() ? ({ id: snap.id, ...(snap.data() as LessonDoc) }) : null;
-        setLesson(data);
-        const init: Record<string, string | null> = {};
-        (data?.questions ?? []).forEach(q => { init[q.id] = null; });
-        setAnswers(init);
-        setSubmitted(false);
-        setLoading(false);
-      }
-    })();
+    (async () => { if (mounted) await fetchLesson(); })();
     return () => { mounted = false; };
-  }, [id]);
+  }, [fetchLesson]);
 
   const questions = useMemo(() => lesson?.questions ?? [], [lesson?.questions]);
 
@@ -70,41 +86,48 @@ export default function LessonDetail() {
   }, [submitted, questions, answers]);
 
   if (loading) {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <ActivityIndicator /><Text style={{ marginTop: 8, color: '#666' }}>Đang tải bài học…</Text>
-    </View>;
+    return (
+      <View style={[styles.center, { paddingTop: insets.top }]}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <ActivityIndicator color={palette.ionMuted} />
+        <Text style={[styles.muted, { marginTop: 8 }]}>Đang tải bài học…</Text>
+      </View>
+    );
   }
+
   if (!lesson) {
-    return <View style={{ flex: 1, padding: 16 }}>
-      <TouchableOpacity onPress={() => router.back()}>
-        <Ionicons name="close" size={24} color="#2563eb" />
-      </TouchableOpacity>
-      <Text style={{ fontSize: 18, fontWeight: '700' }}>Không tìm thấy bài học</Text>
-    </View>;
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top + 10 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={{ marginBottom: 8, width: 30 }}>
+          <Ionicons name="close" size={24} color={palette.link} />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: palette.text }}>Không tìm thấy bài học</Text>
+      </View>
+    );
   }
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: '#0b0b0c' }}
+      style={styles.screen}
       contentContainerStyle={{ padding: 16, paddingBottom: 40, paddingTop: insets.top + 10 }}
     >
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+
       {/* Back + tiêu đề */}
       <TouchableOpacity onPress={() => router.back()} style={{ marginBottom: 8, width: 30 }}>
-        <Ionicons name="close" size={28} color="#60a5fa" />
+        <Ionicons name="close" size={28} color={palette.brandSoft} />
       </TouchableOpacity>
 
-      <Text style={{ color: 'white', fontSize: 22, fontWeight: '800' }}>{lesson.title}</Text>
-      <Text style={{ color: '#9aa0a6', marginTop: 6 }}>
+      <Text style={styles.title}>{lesson.title || 'Bài học'}</Text>
+      <Text style={[styles.muted, { marginTop: 6 }]}>
         Lớp {lesson.grade ?? '—'} {lesson.unit ? `• ${lesson.unit}` : ''} {lesson.topicType ? `• ${lesson.topicType}` : ''}
       </Text>
 
-      {lesson.content ? <Text style={{ color: '#cbd5e1', marginTop: 12 }}>{lesson.content}</Text> : null}
+      {lesson.content ? <Text style={[styles.body, { marginTop: 12 }]}>{lesson.content}</Text> : null}
 
       {/* Câu hỏi */}
       <View style={{ marginTop: 18 }}>
-        <Text style={{ color: 'white', fontSize: 18, fontWeight: '800', marginBottom: 10 }}>
-          Câu hỏi ({questions.length})
-        </Text>
+        <Text style={styles.sectionTitle}>Câu hỏi ({questions.length})</Text>
 
         <FlatList
           data={questions}
@@ -115,6 +138,7 @@ export default function LessonDetail() {
               idx={index + 1}
               selected={answers[item.id]}
               submitted={submitted}
+              palette={palette}
               onSelect={(optId) => {
                 if (submitted) return;
                 setAnswers((prev) => ({ ...prev, [item.id]: optId }));
@@ -128,17 +152,23 @@ export default function LessonDetail() {
         {!submitted ? (
           <TouchableOpacity
             onPress={() => setSubmitted(true)}
-            style={{ marginTop: 16, backgroundColor: '#3b82f6', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
+            style={[styles.primaryBtn]}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Nộp bài</Text>
+            <Text style={styles.primaryBtnText}>Nộp bài</Text>
           </TouchableOpacity>
         ) : (
-          <View style={{ marginTop: 14, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#1f2937', backgroundColor: '#0b0f1a' }}>
-            <Text style={{ color: '#cbd5e1' }}>
-              Kết quả: <Text style={{ color: '#22c55e', fontWeight: '800' }}>{gainedPoints}</Text> / {totalPoints} điểm
+          <View style={styles.resultCard}>
+            <Text style={styles.body}>
+              Kết quả: <Text style={{ color: SUCCESS, fontWeight: '800' }}>{gainedPoints}</Text> / {totalPoints} điểm
             </Text>
-            <TouchableOpacity onPress={() => { setSubmitted(false); setAnswers(Object.fromEntries(questions.map(q => [q.id, null]))); }} style={{ marginTop: 8 }}>
-              <Text style={{ color: '#60a5fa' }}>Làm lại</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setSubmitted(false);
+                setAnswers(Object.fromEntries(questions.map(q => [q.id, null])));
+              }}
+              style={{ marginTop: 8 }}
+            >
+              <Text style={{ color: palette.link, fontWeight: '600' }}>Làm lại</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -149,17 +179,17 @@ export default function LessonDetail() {
 
 /* ---------- Card câu hỏi (MCQ) ---------- */
 function QuestionCard({
-  q, idx, selected, submitted, onSelect,
+  q, idx, selected, submitted, onSelect, palette,
 }: {
-  q: Question; idx: number; selected: string | null; submitted: boolean; onSelect: (optId: string) => void;
+  q: Question; idx: number; selected: string | null; submitted: boolean; onSelect: (optId: string) => void; palette: Palette;
 }) {
   const isMCQ = q.type === 'mcq' && Array.isArray(q.options);
   return (
-    <View style={{ backgroundColor: '#111827', borderRadius: 16, borderWidth: 1, borderColor: '#1f2937', padding: 12 }}>
-      <Text style={{ color: '#cbd5e1', marginBottom: 6 }}>
-        <Text style={{ color: 'white', fontWeight: '800' }}>Câu {idx}:</Text> {q.prompt}
+    <View style={[cardStyles.card(palette)]}>
+      <Text style={[cardStyles.prompt(palette)]}>
+        <Text style={{ color: palette.text, fontWeight: '800' }}>Câu {idx}:</Text> {q.prompt}
       </Text>
-      {q.hint ? <Text style={{ color: '#9aa0a6', fontStyle: 'italic' }}>Gợi ý: {q.hint}</Text> : null}
+      {q.hint ? <Text style={{ color: palette.textMuted, fontStyle: 'italic' }}>Gợi ý: {q.hint}</Text> : null}
 
       {isMCQ ? (
         <View style={{ marginTop: 10 }}>
@@ -167,32 +197,29 @@ function QuestionCard({
             const isSelected = selected === op.id;
             const isCorrect = !!op.correct;
             const borderColor =
-              submitted && isSelected && !isCorrect ? '#ef4444' :
-              submitted && isCorrect ? '#22c55e' : '#1f2937';
+              submitted && isSelected && !isCorrect ? palette.danger :
+              submitted && isCorrect ? SUCCESS : palette.cardBorder;
             const iconName =
               !submitted ? (isSelected ? 'radio-button-on' : 'radio-button-off') :
               isCorrect ? 'checkmark-circle' :
               isSelected ? 'close-circle' : 'ellipse-outline';
             const iconColor =
-              submitted && isCorrect ? '#22c55e' :
-              submitted && isSelected && !isCorrect ? '#ef4444' :
-              '#9aa0a6';
+              submitted && isCorrect ? SUCCESS :
+              submitted && isSelected && !isCorrect ? palette.danger :
+              palette.ionMuted;
 
             return (
               <TouchableOpacity
                 key={op.id}
                 onPress={() => onSelect(op.id)}
                 disabled={submitted}
-                style={{
-                  flexDirection: 'row', alignItems: 'center',
-                  paddingVertical: 10, paddingHorizontal: 12,
-                  borderRadius: 12, borderWidth: 1, borderColor,
-                  backgroundColor: '#0b0f1a', marginBottom: 8,
-                  opacity: submitted ? 0.95 : 1,
-                }}
+                style={[
+                  cardStyles.optionRow(palette),
+                  { borderColor, opacity: submitted ? 0.95 : 1 },
+                ]}
               >
                 <Ionicons name={iconName as any} size={18} color={iconColor} style={{ marginRight: 8 }} />
-                <Text style={{ color: '#cbd5e1' }}>{op.text}</Text>
+                <Text style={{ color: palette.textFaint }}>{op.text}</Text>
               </TouchableOpacity>
             );
           })}
@@ -200,8 +227,77 @@ function QuestionCard({
       ) : null}
 
       {submitted && q.solution ? (
-        <Text style={{ color: '#86efac', marginTop: 8 }}>Lời giải: {q.solution}</Text>
+        <Text style={{ color: SUCCESS, marginTop: 8 }}>Lời giải: {q.solution}</Text>
       ) : null}
     </View>
   );
 }
+
+/* ---------- Utils ---------- */
+function fmtDate(d: Date) {
+  try {
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  } catch {
+    return '';
+  }
+}
+
+/* ---------- Styles theo theme ---------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: p.bg },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: p.bg },
+    title: { color: p.text, fontSize: 22, fontWeight: '800' },
+    body: { color: p.textFaint },
+    muted: { color: p.textMuted },
+    sectionTitle: { color: p.text, fontSize: 18, fontWeight: '800', marginBottom: 10 },
+
+    primaryBtn: {
+      marginTop: 16,
+      backgroundColor: p.brand,
+      paddingVertical: 14,
+      borderRadius: 12,
+      alignItems: 'center',
+    },
+    primaryBtnText: { color: p.editBtnText, fontWeight: '800' },
+
+    resultCard: {
+      marginTop: 14,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      backgroundColor: p.card,
+    },
+  });
+}
+
+const cardStyles = {
+  card: (p: Palette) =>
+    ({
+      backgroundColor: p.card,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      padding: 12,
+    } as const),
+  prompt: (p: Palette) =>
+    ({
+      color: p.textFaint,
+      marginBottom: 6,
+    } as const),
+  optionRow: (p: Palette) =>
+    ({
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      backgroundColor: p.pillBg,
+      marginBottom: 8,
+    } as const),
+};

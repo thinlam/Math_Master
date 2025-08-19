@@ -1,3 +1,4 @@
+import { useTheme, type Palette } from '@/theme/ThemeProvider';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -10,6 +11,7 @@ import {
   RefreshControl,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -79,6 +81,8 @@ function classToGradeNumber(levelStr: string): number | null {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { palette, colorScheme } = useTheme();                 // 🔹 lấy theme toàn cục
+  const styles = useMemo(() => makeStyles(palette), [palette]); // 🔹 styles động theo theme
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -108,8 +112,7 @@ export default function HomeScreen() {
           uid: u.uid,
           name: u.displayName || data.name || 'User',
           email: u.email || data.email || 'user@example.com',
-          // Ưu tiên ảnh từ Firestore (Cloudinary URL) nếu có
-          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
+          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,  // ưu tiên Cloudinary trong Firestore
           level: data.level ?? null,
           points: typeof data.points === 'number' ? data.points : 0,
           streak: typeof data.streak === 'number' ? data.streak : 0,
@@ -183,6 +186,7 @@ export default function HomeScreen() {
   if (!firebaseUser || loading) {
     return (
       <SafeAreaView style={styles.container}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={styles.center}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingTxt}>{t('loading')}</Text>
@@ -193,18 +197,18 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#93C5FD" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
       >
         {/* Header */}
         <View style={styles.headerCard}>
           <View style={styles.row}>
-            {/* AVATAR: ưu tiên ảnh nếu có */}
             {user?.photoURL ? (
               <Image
                 source={{ uri: user.photoURL }}
-                style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: '#1E293B' }}
+                style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }}
                 resizeMode="cover"
               />
             ) : (
@@ -225,12 +229,12 @@ export default function HomeScreen() {
                     !user?.level && { borderStyle: 'dashed', backgroundColor: 'transparent' },
                   ]}
                 >
-                  <Ionicons name="school-outline" size={16} color="#4F46E5" />
+                  <Ionicons name="school-outline" size={16} color={palette.ionMain} />
                   <Text style={styles.levelTxt}>{user?.level || t('noClass')}</Text>
                 </View>
 
                 <TouchableOpacity style={styles.changeBtn} onPress={openClassModal}>
-                  <Ionicons name="create-outline" size={16} color="#111827" />
+                  <Ionicons name="create-outline" size={16} color={palette.editBtnText} />
                   <Text style={styles.changeTxt}>
                     {user?.level ? t('changeClass') : t('chooseClass')}
                   </Text>
@@ -244,9 +248,9 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('quickActions')}</Text>
           <View style={styles.quickRow}>
-            <QuickButton icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
-            <QuickButton icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
-            <QuickButton icon="flash-outline" label={t('challenge')} onPress={() => router.push('/challenge')} />
+            <QuickButton palette={palette} icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
+            <QuickButton palette={palette} icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
+            <QuickButton palette={palette} icon="flash-outline" label={t('challenge')} onPress={() => router.push('/challenge')} />
           </View>
         </View>
 
@@ -254,9 +258,9 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('stats')}</Text>
           <View style={styles.statsRow}>
-            <StatCard icon="diamond-stone" color="#9333EA" label={t('points')} value={String(user?.points ?? 0)} />
-            <StatCard icon="medal-outline" color="#F59E0B" label={t('badges')} value={String(user?.badges?.length ?? 0)} />
-            <StatCard icon="fire" color="#EF4444" label={t('streak')} value={`${user?.streak ?? 0} ${t('days')}`} />
+            <StatCard palette={palette} icon="diamond-stone" color="#9333EA" label={t('points')} value={String(user?.points ?? 0)} />
+            <StatCard palette={palette} icon="medal-outline" color={palette.mciGold} label={t('badges')} value={String(user?.badges?.length ?? 0)} />
+            <StatCard palette={palette} icon="fire" color={palette.streak} label={t('streak')} value={`${user?.streak ?? 0} ${t('days')}`} />
           </View>
         </View>
       </ScrollView>
@@ -291,7 +295,7 @@ export default function HomeScreen() {
                 onPress={saveClass}
                 disabled={savingClass}
               >
-                <Text style={[styles.modalBtnTxt, { color: '#111827', fontWeight: '700' }]}>
+                <Text style={[styles.modalBtnTxt, { color: palette.editBtnText, fontWeight: '700' }]}>
                   {savingClass ? t('saving') : t('save')}
                 </Text>
               </TouchableOpacity>
@@ -304,63 +308,142 @@ export default function HomeScreen() {
 }
 
 /* ---------- Sub Components ---------- */
-function QuickButton({ icon, label, onPress }: { icon: any; label: string; onPress?: () => void }) {
+function QuickButton({
+  icon,
+  label,
+  onPress,
+  palette,
+}: {
+  icon: any;
+  label: string;
+  onPress?: () => void;
+  palette: Palette;
+}) {
   return (
-    <TouchableOpacity style={styles.quickBtn} onPress={onPress}>
-      <Ionicons name={icon} size={18} color="#111827" />
-      <Text style={styles.quickTxt}>{label}</Text>
+    <TouchableOpacity style={[quickStyles.btn, { backgroundColor: palette.editBtnBg }]} onPress={onPress}>
+      <Ionicons name={icon} size={18} color={palette.editBtnText} />
+      <Text style={[quickStyles.txt, { color: palette.editBtnText }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function StatCard({ icon, label, value, color }: { icon: any; label: string; value: string; color: string }) {
+const quickStyles = StyleSheet.create({
+  btn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', gap: 6 },
+  txt: { fontWeight: '700' },
+});
+
+function StatCard({
+  icon,
+  label,
+  value,
+  color,
+  palette,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  color: string;
+  palette: Palette;
+}) {
   return (
-    <View style={styles.statCard}>
-      <View style={[styles.statIconWrap, { backgroundColor: `${color}22` }]}>
+    <View style={{
+      flex: 1,
+      backgroundColor: palette.card,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: palette.cardBorder,
+      alignItems: 'flex-start',
+      gap: 6,
+    }}>
+      <View style={{ borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: `${color}${palette.statIconBgAlpha}` }}>
         <MaterialCommunityIcons name={icon} size={18} color={color} />
       </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={{ color: palette.text, fontSize: 18, fontWeight: '700' }}>{value}</Text>
+      <Text style={{ color: palette.textMuted, fontSize: 12 }}>{label}</Text>
     </View>
   );
 }
 
-/* ---------- Styles (giữ nguyên phần còn lại) ---------- */
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0B1220' },
-  scroll: { padding: 16, gap: 12 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  loadingTxt: { color: '#CBD5E1' },
-  headerCard: { backgroundColor: '#0F172A', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#1F2A44' },
-  row: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-  avatar: { width: 60, height: 60, borderRadius: 999, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center' },
-  avatarTxt: { color: '#0EA5E9', fontSize: 20, fontWeight: '700' },
-  hello: { fontSize: 18, fontWeight: '700', color: '#E5E7EB' },
-  levelRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#111827', borderWidth: 1, borderColor: '#1F2A44' },
-  levelTxt: { color: '#CBD5E1', fontSize: 12, fontWeight: '600' },
-  changeBtn: { flexDirection: 'row', gap: 6, backgroundColor: '#93C5FD', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
-  changeTxt: { color: '#111827', fontWeight: '700' },
-  card: { backgroundColor: '#0F172A', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#1F2A44' },
-  cardTitle: { color: '#E5E7EB', fontSize: 16, fontWeight: '700', marginBottom: 10 },
-  quickRow: { flexDirection: 'row', gap: 10 },
-  quickBtn: { flex: 1, backgroundColor: '#93C5FD', paddingVertical: 12, borderRadius: 12, alignItems: 'center', gap: 6 },
-  quickTxt: { color: '#111827', fontWeight: '700' },
-  statsRow: { flexDirection: 'row', gap: 12 },
-  statCard: { flex: 1, backgroundColor: '#0F172A', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#1F2A44', alignItems: 'flex-start', gap: 6 },
-  statIconWrap: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
-  statValue: { color: '#F8FAFC', fontSize: 18, fontWeight: '700' },
-  statLabel: { color: '#94A3B8', fontSize: 12 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  modalCard: { width: '100%', backgroundColor: '#0F172A', borderRadius: 16, borderWidth: 1, borderColor: '#1F2A44', padding: 14 },
-  modalTitle: { color: '#E5E7EB', fontWeight: '700', fontSize: 16, marginBottom: 10 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  classItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#1F2A44', backgroundColor: '#0B1220' },
-  classItemActive: { borderColor: '#10B98155', backgroundColor: '#0B1A14' },
-  classTxt: { color: '#CBD5E1', fontWeight: '600' },
-  classTxtActive: { color: '#D1FAE5' },
-  modalActions: { flexDirection: 'row', gap: 10, marginTop: 14, justifyContent: 'flex-end' },
-  modalBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#1F2A44', backgroundColor: '#0B1220' },
-  saveBtn: { backgroundColor: '#93C5FD', borderColor: '#93C5FD' },
-  modalBtnTxt: { color: '#E5E7EB', fontWeight: '600' },
-});
+/* ---------- Styles theo theme ---------- */
+function makeStyles(p: Palette) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: p.bg },
+    scroll: { padding: 16, gap: 12 },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+    loadingTxt: { color: p.textMuted },
+
+    headerCard: { backgroundColor: p.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: p.cardBorder },
+    row: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+
+    avatar: { width: 60, height: 60, borderRadius: 999, backgroundColor: p.cardBorder, justifyContent: 'center', alignItems: 'center' },
+    avatarTxt: { color: p.brand, fontSize: 20, fontWeight: '700' },
+
+    hello: { fontSize: 18, fontWeight: '700', color: p.text },
+    levelRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+    levelPill: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: p.pillBg,
+      borderWidth: 1,
+      borderColor: p.pillBorder,
+    },
+    levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
+
+    changeBtn: {
+      flexDirection: 'row',
+      gap: 6,
+      backgroundColor: p.editBtnBg,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    changeTxt: { color: p.editBtnText, fontWeight: '700' },
+
+    card: { backgroundColor: p.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: p.cardBorder },
+    cardTitle: { color: p.text, fontSize: 16, fontWeight: '700', marginBottom: 10 },
+
+    quickRow: { flexDirection: 'row', gap: 10 },
+
+    statsRow: { flexDirection: 'row', gap: 12 },
+
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+    modalCard: { width: '100%', backgroundColor: p.card, borderRadius: 16, borderWidth: 1, borderColor: p.cardBorder, padding: 14 },
+    modalTitle: { color: p.text, fontWeight: '700', fontSize: 16, marginBottom: 10 },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    classItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      backgroundColor: p.bg,
+    },
+    classItemActive: { borderColor: '#10B98155', backgroundColor: colorMix(p.bg, '#10B981', 0.08) }, // nhẹ xanh khi active
+    classTxt: { color: p.textFaint, fontWeight: '600' },
+    classTxtActive: { color: '#D1FAE5' },
+
+    modalActions: { flexDirection: 'row', gap: 10, marginTop: 14, justifyContent: 'flex-end' },
+    modalBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: p.cardBorder, backgroundColor: p.bg },
+    cancelBtn: {},
+    saveBtn: { backgroundColor: p.editBtnBg, borderColor: p.editBtnBg },
+    modalBtnTxt: { color: p.text, fontWeight: '600' },
+  });
+}
+
+/** Trộn màu đơn giản để tạo accent nhẹ (không bắt buộc hoàn hảo) */
+function colorMix(bg: string, fg: string, alpha = 0.1) {
+  // nếu fg là dạng #RRGGBB, trả về fg với alpha ~ bằng cách overlay đơn giản
+  // Ở đây để gọn, mình dùng fg kèm suffix '1A'.. nhưng để nhất quán, cứ dùng alpha cố định:
+  const a = Math.max(0, Math.min(1, alpha));
+  const hexAlpha = Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase();
+  return `${fg}${hexAlpha}`;
+}
