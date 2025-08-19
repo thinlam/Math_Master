@@ -45,6 +45,9 @@ const I18N = {
     save: 'Lưu',
     cancel: 'Hủy',
     loading: 'Đang tải...',
+    // 🔹 Thêm i18n cho Xu
+    coins: 'Xu',
+    topup: 'Nạp xu',
   },
 } as const;
 
@@ -64,6 +67,8 @@ type UserProfile = {
   badges: BadgeItem[];
   streak: number;
   photoURL?: string | null;
+  // 🔹 Thêm trường xu
+  coins: number;
 };
 
 const CLASS_OPTIONS = [
@@ -79,10 +84,15 @@ function classToGradeNumber(levelStr: string): number | null {
   return n >= 1 && n <= 12 ? n : null;
 }
 
+// 🔹 helper định dạng số xu
+function formatCoins(n: number) {
+  return new Intl.NumberFormat('vi-VN').format(n);
+}
+
 export default function HomeScreen() {
   const router = useRouter();
-  const { palette, colorScheme } = useTheme();                 // 🔹 lấy theme toàn cục
-  const styles = useMemo(() => makeStyles(palette), [palette]); // 🔹 styles động theo theme
+  const { palette, colorScheme } = useTheme();
+  const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -112,11 +122,13 @@ export default function HomeScreen() {
           uid: u.uid,
           name: u.displayName || data.name || 'User',
           email: u.email || data.email || 'user@example.com',
-          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,  // ưu tiên Cloudinary trong Firestore
+          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
           level: data.level ?? null,
           points: typeof data.points === 'number' ? data.points : 0,
           streak: typeof data.streak === 'number' ? data.streak : 0,
           badges: Array.isArray(data.badges) ? data.badges : [],
+          // 🔹 đọc coins từ Firestore (mặc định 0)
+          coins: typeof data.coins === 'number' ? data.coins : 0,
         };
         setUser(profile);
         setSelectedClass(profile.level);
@@ -183,6 +195,11 @@ export default function HomeScreen() {
     router.push('/Learnning/Learn');
   }, [router, user?.level, selectedClass]);
 
+  // 🔹 đi tới cửa hàng nạp xu
+  const goTopUp = useCallback(() => {
+    router.push('/(tabs)/Store');
+  }, [router]);
+
   if (!firebaseUser || loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -222,7 +239,7 @@ export default function HomeScreen() {
                 {t('hello')}, {user?.name || 'User'} 👋
               </Text>
 
-              <View style={styles.levelRow}>
+              <View style={[styles.levelRow, { flexWrap: 'wrap' }]}>
                 <View
                   style={[
                     styles.levelPill,
@@ -231,6 +248,17 @@ export default function HomeScreen() {
                 >
                   <Ionicons name="school-outline" size={16} color={palette.ionMain} />
                   <Text style={styles.levelTxt}>{user?.level || t('noClass')}</Text>
+                </View>
+
+                {/* 🔹 Pill hiển thị Xu + nút nạp nhanh */}
+                <View style={styles.coinPill}>
+                  <Ionicons name="cash-outline" size={16} color={palette.coinIcon} />
+                  <Text style={styles.coinTxt}>{formatCoins(user?.coins ?? 0)} {t('coins')}</Text>
+
+                  <TouchableOpacity style={styles.topupBtn} onPress={goTopUp}>
+                    <Ionicons name="add" size={14} color={palette.editBtnText} />
+                    <Text style={styles.topupTxt}>{t('topup')}</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity style={styles.changeBtn} onPress={openClassModal}>
@@ -251,6 +279,8 @@ export default function HomeScreen() {
             <QuickButton palette={palette} icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
             <QuickButton palette={palette} icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
             <QuickButton palette={palette} icon="flash-outline" label={t('challenge')} onPress={() => router.push('/challenge')} />
+            {/* 🔹 nút nạp xu nhanh */}
+            <QuickButton palette={palette} icon="wallet-outline" label={t('topup')} onPress={goTopUp} />
           </View>
         </View>
 
@@ -258,8 +288,13 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('stats')}</Text>
           <View style={styles.statsRow}>
+            {/* 🔹 Thẻ Xu */}
+            {/* <StatCard palette={palette} icon="cash" color={palette.coinAccent} label={t('coins')} value={formatCoins(user?.coins ?? 0)} /> */}
+            {/* Điểm */}
             <StatCard palette={palette} icon="diamond-stone" color="#9333EA" label={t('points')} value={String(user?.points ?? 0)} />
+            {/* Huy hiệu */}
             <StatCard palette={palette} icon="medal-outline" color={palette.mciGold} label={t('badges')} value={String(user?.badges?.length ?? 0)} />
+            {/* Chuỗi ngày */}
             <StatCard palette={palette} icon="fire" color={palette.streak} label={t('streak')} value={`${user?.streak ?? 0} ${t('days')}`} />
           </View>
         </View>
@@ -394,6 +429,32 @@ function makeStyles(p: Palette) {
     },
     levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
 
+    // 🔹 coin pill
+    coinPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: p.pillBg,
+      borderWidth: 1,
+      borderColor: p.pillBorder,
+    },
+    coinTxt: { color: p.textFaint, fontSize: 12, fontWeight: '700' },
+
+    topupBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: p.editBtnBg,
+      marginLeft: 4,
+    },
+    topupTxt: { color: p.editBtnText, fontWeight: '700', fontSize: 12 },
+
     changeBtn: {
       flexDirection: 'row',
       gap: 6,
@@ -408,9 +469,9 @@ function makeStyles(p: Palette) {
     card: { backgroundColor: p.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: p.cardBorder },
     cardTitle: { color: p.text, fontSize: 16, fontWeight: '700', marginBottom: 10 },
 
-    quickRow: { flexDirection: 'row', gap: 10 },
+    quickRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
 
-    statsRow: { flexDirection: 'row', gap: 12 },
+    statsRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
 
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
     modalCard: { width: '100%', backgroundColor: p.card, borderRadius: 16, borderWidth: 1, borderColor: p.cardBorder, padding: 14 },
@@ -427,7 +488,7 @@ function makeStyles(p: Palette) {
       borderColor: p.cardBorder,
       backgroundColor: p.bg,
     },
-    classItemActive: { borderColor: '#10B98155', backgroundColor: colorMix(p.bg, '#10B981', 0.08) }, // nhẹ xanh khi active
+    classItemActive: { borderColor: '#10B98155', backgroundColor: colorMix(p.bg, '#10B981', 0.08) },
     classTxt: { color: p.textFaint, fontWeight: '600' },
     classTxtActive: { color: '#D1FAE5' },
 
@@ -441,8 +502,6 @@ function makeStyles(p: Palette) {
 
 /** Trộn màu đơn giản để tạo accent nhẹ (không bắt buộc hoàn hảo) */
 function colorMix(bg: string, fg: string, alpha = 0.1) {
-  // nếu fg là dạng #RRGGBB, trả về fg với alpha ~ bằng cách overlay đơn giản
-  // Ở đây để gọn, mình dùng fg kèm suffix '1A'.. nhưng để nhất quán, cứ dùng alpha cố định:
   const a = Math.max(0, Math.min(1, alpha));
   const hexAlpha = Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase();
   return `${fg}${hexAlpha}`;

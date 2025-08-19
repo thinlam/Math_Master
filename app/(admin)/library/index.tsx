@@ -44,10 +44,32 @@ type LibraryItem = {
   tags?: string[];
   content: string;     // Nội dung text copy từ Word
   updatedAt?: any;     // Timestamp
+  premium?: boolean;   // <-- thêm
 };
 
 const PAGE_SIZE = 20;
 const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
+
+type LevelFilter = 'all' | 'basic' | 'advanced';
+
+/* ---------- Chip nhỏ tiện dùng ---------- */
+const Chip = ({
+  active, label, onPress,
+  activeBg = '#4F46E5', activeText = '#fff', inactiveBg = '#EEF2FF', inactiveText = '#4F46E5'
+}: { active: boolean; label: string; onPress: () => void; activeBg?: string; activeText?: string; inactiveBg?: string; inactiveText?: string; }) => (
+  <TouchableOpacity
+    onPress={onPress}
+    style={{
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      marginRight: 8,
+      backgroundColor: active ? activeBg : inactiveBg,
+    }}
+  >
+    <Text style={{ color: active ? activeText : inactiveText, fontWeight: '700' }}>{label}</Text>
+  </TouchableOpacity>
+);
 
 /* ---------- Main ---------- */
 export default function AdminLibraryScreen() {
@@ -64,6 +86,7 @@ export default function AdminLibraryScreen() {
   /* Filters */
   const [qText, setQText] = useState('');
   const [gradeFilter, setGradeFilter] = useState<number | null>(null);
+  const [levelFilter, setLevelFilter] = useState<LevelFilter>('all'); // <-- thêm
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
 
   /* Modal Add/Edit */
@@ -72,8 +95,9 @@ export default function AdminLibraryScreen() {
   const [fTitle, setFTitle] = useState('');
   const [fSubtitle, setFSubtitle] = useState('');
   const [fGrade, setFGrade] = useState<number>(1);
-  const [fTags, setFTags] = useState<string>('');    // comma separated
-  const [fContent, setFContent] = useState<string>(''); // TEXT CONTENT
+  const [fTags, setFTags] = useState<string>('');          // comma separated
+  const [fContent, setFContent] = useState<string>('');    // TEXT CONTENT
+  const [fLevel, setFLevel] = useState<'basic' | 'advanced'>('basic'); // <-- thêm
 
   const colRef = useMemo(() => collection(db, 'library'), []);
 
@@ -81,22 +105,34 @@ export default function AdminLibraryScreen() {
   const buildQuery = useCallback(() => {
     const parts: any[] = [];
     if (gradeFilter) parts.push(where('grade', '==', gradeFilter));
+    // Lọc premium trên client để không cần index thêm; nếu muốn có thể thêm where('premium', '==', true/false)
     parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
     parts.push(limit(PAGE_SIZE));
     return query(colRef, ...parts);
   }, [colRef, gradeFilter, sortBy]);
 
-  const applySearch = useCallback((arr: LibraryItem[]) => {
+  const applySearchAndLevel = useCallback((arr: LibraryItem[]) => {
     const t = qText.trim().toLowerCase();
-    if (!t) return arr;
-    return arr.filter((it) => {
-      const inTitle = it.title?.toLowerCase().includes(t);
-      const inSub = it.subtitle?.toLowerCase().includes(t);
-      const inTag = (it.tags || []).some((x) => x.toLowerCase().includes(t));
-      const inContent = it.content?.toLowerCase().includes(t);
-      return inTitle || inSub || inTag || inContent;
-    });
-  }, [qText]);
+    let out = arr;
+
+    if (t) {
+      out = out.filter((it) => {
+        const inTitle = it.title?.toLowerCase().includes(t);
+        const inSub = it.subtitle?.toLowerCase().includes(t);
+        const inTag = (it.tags || []).some((x) => x.toLowerCase().includes(t));
+        const inContent = it.content?.toLowerCase().includes(t);
+        return inTitle || inSub || inTag || inContent;
+      });
+    }
+
+    if (levelFilter === 'basic') {
+      out = out.filter((it) => !it.premium);
+    } else if (levelFilter === 'advanced') {
+      out = out.filter((it) => !!it.premium);
+    }
+
+    return out;
+  }, [qText, levelFilter]);
 
   const fetchFirst = useCallback(async () => {
     setLoading(true);
@@ -107,7 +143,7 @@ export default function AdminLibraryScreen() {
       const snap = await getDocs(qRef);
       const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LibraryItem[];
 
-      setItems(applySearch(data));
+      setItems(applySearchAndLevel(data));
       setHasMore(snap.docs.length === PAGE_SIZE);
       lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
     } catch (e) {
@@ -116,7 +152,7 @@ export default function AdminLibraryScreen() {
     } finally {
       setLoading(false);
     }
-  }, [buildQuery, applySearch]);
+  }, [buildQuery, applySearchAndLevel]);
 
   const fetchMore = useCallback(async () => {
     if (!hasMore || loading || refreshing || !lastDocRef.current) return;
@@ -131,17 +167,17 @@ export default function AdminLibraryScreen() {
       const snap = await getDocs(qRef);
       const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LibraryItem[];
 
-      setItems((prev) => [...prev, ...applySearch(data)]);
+      setItems((prev) => [...prev, ...applySearchAndLevel(data)]);
       setHasMore(snap.docs.length === PAGE_SIZE);
       lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : lastDocRef.current;
     } catch (e) {
       console.warn('fetchMore error', e);
     }
-  }, [colRef, gradeFilter, sortBy, hasMore, loading, refreshing, applySearch]);
+  }, [colRef, gradeFilter, sortBy, hasMore, loading, refreshing, applySearchAndLevel]);
 
   useEffect(() => {
     fetchFirst();
-  }, [gradeFilter, sortBy, qText]);
+  }, [gradeFilter, sortBy, qText, levelFilter]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -157,6 +193,7 @@ export default function AdminLibraryScreen() {
     setFGrade(1);
     setFTags('');
     setFContent('');
+    setFLevel('basic');
   }, []);
 
   const openAdd = useCallback(() => {
@@ -171,6 +208,7 @@ export default function AdminLibraryScreen() {
     setFGrade(it.grade || 1);
     setFTags((it.tags || []).join(', '));
     setFContent(it.content || '');
+    setFLevel(it.premium ? 'advanced' : 'basic');
     setVisible(true);
   }, []);
 
@@ -193,6 +231,7 @@ export default function AdminLibraryScreen() {
         .map((s) => s.trim())
         .filter(Boolean),
       content: fContent.trim(),
+      premium: fLevel === 'advanced',                 // <-- quan trọng
       updatedAt: serverTimestamp(),
     };
 
@@ -203,7 +242,7 @@ export default function AdminLibraryScreen() {
       } else {
         const newRef = doc(collection(db, 'library'));
         await setDoc(newRef, payload as any);
-        Alert.alert('Đã thêm', 'Tài liệu mới đã được thêm.');
+        Alert.alert('Đã thêm', `Tài liệu mới (${fLevel === 'advanced' ? 'Nâng cao' : 'Cơ bản'}) đã được thêm.`);
       }
       setVisible(false);
       resetForm();
@@ -212,7 +251,7 @@ export default function AdminLibraryScreen() {
       console.warn('save error', e);
       Alert.alert('Lỗi', 'Không thể lưu tài liệu.');
     }
-  }, [editingId, fTitle, fSubtitle, fGrade, fTags, fContent, resetForm, fetchFirst]);
+  }, [editingId, fTitle, fSubtitle, fGrade, fTags, fContent, fLevel, resetForm, fetchFirst]);
 
   const handleDelete = useCallback((id: string) => {
     Alert.alert('Xoá tài liệu?', 'Bạn chắc chắn muốn xoá?', [
@@ -237,6 +276,7 @@ export default function AdminLibraryScreen() {
   /* ---------- List UI ---------- */
   const renderItem = useCallback(
     ({ item }: { item: LibraryItem }) => {
+      const isPremium = !!item.premium;
       return (
         <View
           style={{
@@ -262,16 +302,48 @@ export default function AdminLibraryScreen() {
               alignItems: 'center',
               justifyContent: 'center',
               marginRight: 12,
+              position: 'relative',
             }}
           >
-            {/* icon file-text thay vì pdf */}
             <MaterialCommunityIcons name="file-document-outline" size={28} color="#4F46E5" />
+            {isPremium && (
+              <View style={{
+                position: 'absolute',
+                right: -6, top: -6,
+                width: 20, height: 20, borderRadius: 10,
+                backgroundColor: '#EF4444',
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 2, borderColor: '#fff'
+              }}>
+                <Ionicons name="star" size={12} color="#fff" />
+              </View>
+            )}
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }} numberOfLines={1}>
-              {item.title}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }} numberOfLines={1}>
+                {item.title}
+              </Text>
+              {isPremium && (
+                <View style={{
+                  marginLeft: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: '#F59E0B',
+                  backgroundColor: '#FFF7ED',
+                  gap: 4
+                }}>
+                  <Ionicons name="lock-closed" size={12} color="#D97706" />
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#D97706' }}>Premium</Text>
+                </View>
+              )}
+            </View>
+
             <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }} numberOfLines={1}>
               {item.subtitle || `Lớp ${item.grade} • Văn bản`}
             </Text>
@@ -365,6 +437,7 @@ export default function AdminLibraryScreen() {
 
         {/* Filters */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12 }}>
+          {/* Sort */}
           <TouchableOpacity
             onPress={() => setSortBy((s) => (s === 'updatedAt' ? 'title' : 'updatedAt'))}
             style={{
@@ -383,6 +456,12 @@ export default function AdminLibraryScreen() {
             </Text>
           </TouchableOpacity>
 
+          {/* Level filter */}
+          <Chip active={levelFilter === 'all'} label="Tất cả" onPress={() => setLevelFilter('all')} activeBg="#111827" inactiveText="#111827" activeText="#fff" inactiveBg="#E5E7EB" />
+          <Chip active={levelFilter === 'basic'} label="Cơ bản" onPress={() => setLevelFilter('basic')} />
+          <Chip active={levelFilter === 'advanced'} label="Nâng cao" onPress={() => setLevelFilter('advanced')} />
+
+          {/* Grade filter */}
           {[null, ...GRADES].map((g, idx) => {
             const active = gradeFilter === g || (g === null && gradeFilter === null);
             return (
@@ -393,12 +472,12 @@ export default function AdminLibraryScreen() {
                   paddingHorizontal: 12,
                   paddingVertical: 8,
                   borderRadius: 999,
-                  marginRight: 8,
+                  marginLeft: 8,
                   backgroundColor: active ? '#4F46E5' : '#EEF2FF',
                 }}
               >
                 <Text style={{ color: active ? '#fff' : '#4F46E5', fontWeight: '700' }}>
-                  {g ? `Lớp ${g}` : 'Tất cả'}
+                  {g ? `Lớp ${g}` : 'Tất cả lớp'}
                 </Text>
               </TouchableOpacity>
             );
@@ -406,7 +485,7 @@ export default function AdminLibraryScreen() {
         </ScrollView>
       </View>
     );
-  }, [insets.top, qText, gradeFilter, sortBy, openAdd]);
+  }, [insets.top, qText, gradeFilter, sortBy, levelFilter, openAdd]);
 
   const ListEmpty = useCallback(
     () => (
@@ -486,6 +565,13 @@ export default function AdminLibraryScreen() {
                 automaticallyAdjustKeyboardInsets
                 contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 120 }}
               >
+                {/* Level */}
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mức độ *</Text>
+                <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+                  <Chip active={fLevel === 'basic'} label="Cơ bản" onPress={() => setFLevel('basic')} />
+                  <Chip active={fLevel === 'advanced'} label="Nâng cao (Premium)" onPress={() => setFLevel('advanced')} />
+                </View>
+
                 {/* Title */}
                 <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tiêu đề *</Text>
                 <TextInput

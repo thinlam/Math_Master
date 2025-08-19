@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   RefreshControl,
   SafeAreaView,
   StatusBar,
@@ -12,15 +13,18 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /* ---------- Firebase ---------- */
-import { db } from '@/scripts/firebase';
+import { auth, db } from '@/scripts/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   collection,
+  doc,
   DocumentData,
+  getDoc,
   getDocs,
   limit,
   orderBy,
@@ -45,7 +49,7 @@ type LibraryItem = {
   sizeMB?: number;
   pages?: number;
   durationSec?: number;
-  premium?: boolean;
+  premium?: boolean; // <— quan trọng
 };
 
 /* ---------- Consts ---------- */
@@ -89,12 +93,38 @@ export default function LibraryScreen() {
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
 
+  // user & premium
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isPremium, setIsPremium] = useState<boolean>(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+
   // filters
   const [queryText, setQueryText] = useState('');
   const [grade, setGrade] = useState<number | null>(null);
   const [typeFilter, setTypeFilter] = useState<LibraryItem['type'] | null>(null);
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
   const debouncedQ = useDebounced(queryText.trim().toLowerCase(), 400);
+
+  /* ---------- Auth + fetch user premium ---------- */
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      setFirebaseUser(u);
+      if (u?.uid) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', u.uid));
+          const data = userDoc.exists() ? (userDoc.data() as any) : {};
+          const premiumFlag = !!data?.premium || data?.role === 'premium';
+          setIsPremium(premiumFlag);
+        } catch (e) {
+          console.warn('get user premium error', e);
+          setIsPremium(false);
+        }
+      } else {
+        setIsPremium(false);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   /* ---------- Build Firestore query ---------- */
   const buildQuery = useCallback(() => {
@@ -188,25 +218,53 @@ export default function LibraryScreen() {
     setRefreshing(false);
   }, [loadInitial]);
 
+  /* ---------- Navigation with premium gate ---------- */
+  const openItem = useCallback((item: LibraryItem) => {
+    const locked = !!item.premium && !isPremium;
+    if (locked) {
+      setShowPaywall(true);
+      return;
+    }
+    if (item.lessonId) {
+      router.push(`/Learnning/Lesson/${item.lessonId}`);
+      return;
+    }
+    router.push({ pathname: '/(tabs)/Library/Item', params: { id: item.id } });
+  }, [isPremium, router]);
+
   /* ---------- Item UI ---------- */
   const renderItem = useCallback(({ item }: { item: LibraryItem }) => {
     const iconName = TYPE_ICON[item.type] || 'file-outline';
-    const goDetail = () => {
-      if (item.lessonId) {
-        router.push(`/Learnning/Lesson/${item.lessonId}`);
-        return;
-      }
-      router.push({ pathname: '/(tabs)/Library/Item', params: { id: item.id } });
-    };
+    const locked = !!item.premium && !isPremium;
 
     return (
-      <TouchableOpacity onPress={goDetail} activeOpacity={0.9} style={styles.card}>
+      <TouchableOpacity
+        onPress={() => openItem(item)}
+        activeOpacity={locked ? 0.8 : 0.9}
+        style={[styles.card, locked && { opacity: 0.6 }]}
+      >
         <View style={styles.cardIcon}>
           <MaterialCommunityIcons name={iconName} size={28} color={palette.text} />
+          {locked && (
+            <View style={styles.lockBadge}>
+              <Ionicons name="lock-closed" size={14} color="#FFFFFF" />
+            </View>
+          )}
         </View>
 
         <View style={{ flex: 1 }}>
-          <Text style={styles.cardTitle} numberOfLines={1}>{item.title || 'Tài liệu'}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              {item.title || 'Tài liệu'}
+            </Text>
+            {!!item.premium && (
+              <View style={[styles.premiumPill, { backgroundColor: palette.brandSoft, borderColor: palette.pillBorder }]}>
+                <Ionicons name="star" size={12} color={palette.text} />
+                <Text style={styles.premiumText}>Premium</Text>
+              </View>
+            )}
+          </View>
+
           <Text style={styles.cardSub} numberOfLines={1}>
             {item.subtitle || `Lớp ${item.grade} • ${item.type}`}
           </Text>
@@ -225,7 +283,7 @@ export default function LibraryScreen() {
         <Ionicons name="chevron-forward" size={20} color={palette.ionMuted} />
       </TouchableOpacity>
     );
-  }, [router, styles, palette]);
+  }, [openItem, styles, palette, isPremium]);
 
   const keyExtractor = useCallback((it: LibraryItem) => it.id, []);
 
@@ -236,6 +294,20 @@ export default function LibraryScreen() {
         {/* Title row */}
         <View style={styles.titleRow}>
           <Text style={styles.title}>Thư viện</Text>
+
+          {/* Premium state */}
+          {isPremium ? (
+            <View style={styles.mePill}>
+              <Ionicons name="shield-checkmark" size={14} color="#10B981" />
+              <Text style={[styles.mePillText, { color: '#10B981' }]}>Đã nâng cấp</Text>
+            </View>
+          ) : (
+            <TouchableOpacity onPress={() => setShowPaywall(true)} style={styles.mePill}>
+              <Ionicons name="star" size={14} color={palette.text} />
+              <Text style={styles.mePillText}>Nâng cấp</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             onPress={() => setSortBy(s => (s === 'updatedAt' ? 'title' : 'updatedAt'))}
             style={styles.sortBtn}
@@ -244,6 +316,17 @@ export default function LibraryScreen() {
             <Text style={styles.sortText}>{sortBy === 'updatedAt' ? 'Mới nhất' : 'A → Z'}</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Upsell banner */}
+        {!isPremium && (
+          <TouchableOpacity onPress={() => setShowPaywall(true)} style={[styles.upsell, { borderColor: palette.cardBorder }]}>
+            <Ionicons name="lock-closed" size={16} color={palette.text} />
+            <Text style={styles.upsellText}>
+              Một số tài liệu nâng cao đã bị khóa. Nâng cấp Premium để mở toàn bộ nội dung.
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={palette.ionMuted} />
+          </TouchableOpacity>
+        )}
 
         {/* Search */}
         <View style={styles.searchBox}>
@@ -275,7 +358,13 @@ export default function LibraryScreen() {
             return (
               <TouchableOpacity
                 onPress={() => setGrade(prev => (prev === g ? null : g))}
-                style={[styles.gradeChip, { backgroundColor: active ? palette.brand : palette.pillBg, borderColor: palette.pillBorder }]}
+                style={[
+                  styles.gradeChip,
+                  {
+                    backgroundColor: active ? palette.brand : palette.pillBg,
+                    borderColor: palette.pillBorder,
+                  },
+                ]}
               >
                 <Text style={[styles.gradeText, { color: active ? '#FFFFFF' : palette.textFaint }]}>
                   Lớp {g}
@@ -288,7 +377,7 @@ export default function LibraryScreen() {
         />
       </View>
     );
-  }, [insets.top, queryText, grade, sortBy, typeFilter, styles, palette]);
+  }, [insets.top, queryText, grade, sortBy, styles, palette, isPremium]);
 
   /* ---------- Empty / Footer ---------- */
   const ListEmpty = useCallback(() => (
@@ -314,16 +403,31 @@ export default function LibraryScreen() {
     );
   }, [loading, hasMore, items.length, palette]);
 
-  /* ---------- Render ---------- */
+  /* ---------- Paywall Modal ---------- */
+  const goUpgrade = useCallback(() => {
+    setShowPaywall(false);
+    // Điều hướng tới tab Store (nơi thanh toán)
+    router.push('/(tabs)/Store');
+  }, [router]);
+
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+      <StatusBar
+        barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'}
+        backgroundColor={palette.bg}
+      />
       <View style={styles.container}>
         <FlatList
           data={items}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={palette.brandSoft}
+            />
+          }
           onEndReachedThreshold={0.3}
           onEndReached={loadMore}
           ListHeaderComponent={ListHeader}
@@ -332,6 +436,32 @@ export default function LibraryScreen() {
           contentContainerStyle={{ paddingBottom: 24 }}
         />
       </View>
+
+      {/* Modal paywall */}
+      <Modal visible={showPaywall} transparent animationType="fade" onRequestClose={() => setShowPaywall(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}>
+            <View style={styles.modalIcon}>
+              <Ionicons name="lock-closed" size={24} color={palette.text} />
+            </View>
+            <Text style={styles.modalTitle}>Nội dung Premium</Text>
+            <Text style={styles.modalDesc}>
+              Tài liệu này chỉ dành cho tài khoản Premium. Nâng cấp để mở toàn bộ tài liệu nâng cao,
+              không giới hạn.
+            </Text>
+
+            <View style={styles.modalRow}>
+              <TouchableOpacity onPress={() => setShowPaywall(false)} style={[styles.modalBtn, { backgroundColor: palette.pillBg, borderColor: palette.pillBorder }]}>
+                <Text style={[styles.modalBtnText, { color: palette.text }]}>Để sau</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={goUpgrade} style={[styles.modalBtn, { backgroundColor: palette.brand }]}>
+                <Text style={[styles.modalBtnText, { color: '#FFFFFF' }]}>Nâng cấp ngay</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -352,6 +482,32 @@ function makeStyles(p: Palette) {
     title: { fontSize: 24, fontWeight: '800', color: p.text, flex: 1 },
     sortBtn: { flexDirection: 'row', alignItems: 'center', padding: 8 },
     sortText: { marginLeft: 6, color: p.text, fontWeight: '600' },
+
+    mePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: RADIUS.pill,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      marginRight: 6,
+      backgroundColor: p.card,
+    },
+    mePillText: { marginLeft: 6, fontWeight: '700', color: p.text },
+
+    // upsell
+    upsell: {
+      marginHorizontal: 16,
+      marginBottom: 8,
+      padding: 10,
+      borderRadius: RADIUS.md,
+      borderWidth: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    upsellText: { flex: 1, color: p.text },
 
     // search
     searchBox: {
@@ -397,8 +553,34 @@ function makeStyles(p: Palette) {
       alignItems: 'center',
       justifyContent: 'center',
       marginRight: 12,
+      position: 'relative',
+    },
+    lockBadge: {
+      position: 'absolute',
+      right: -6,
+      top: -6,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: '#EF4444',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: p.card,
     },
     cardTitle: { fontSize: 16, fontWeight: '700', color: p.text },
+    premiumPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: RADIUS.pill,
+      borderWidth: 1,
+      marginLeft: 8,
+      gap: 4,
+    },
+    premiumText: { fontSize: 11, fontWeight: '800', color: p.text },
+
     cardSub: { fontSize: 13, color: p.textMuted, marginTop: 2 },
 
     // tags
@@ -417,5 +599,42 @@ function makeStyles(p: Palette) {
 
     emptyWrap: { alignItems: 'center', paddingTop: 48 },
     emptyText: { color: p.textMuted, marginTop: 8 },
+
+    // modal
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.35)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20,
+    },
+    modalCard: {
+      width: '100%',
+      maxWidth: 420,
+      borderRadius: 16,
+      borderWidth: 1,
+      padding: 16,
+    },
+    modalIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: p.cardBorder,
+      alignSelf: 'center',
+      marginBottom: 12,
+    },
+    modalTitle: { fontSize: 18, fontWeight: '800', color: p.text, textAlign: 'center' },
+    modalDesc: { color: p.textMuted, marginTop: 6, textAlign: 'center' },
+    modalRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
+    modalBtn: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 12,
+      alignItems: 'center',
+      borderWidth: 1,
+    },
+    modalBtnText: { fontWeight: '800' },
   });
 }

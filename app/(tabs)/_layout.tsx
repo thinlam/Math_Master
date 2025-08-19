@@ -83,6 +83,10 @@ export default function TabLayout() {
         name="Library/Item"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name = "challenge"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }
