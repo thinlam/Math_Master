@@ -87,6 +87,10 @@ export default function TabLayout() {
         name = "challenge"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="premium/Status"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

@@ -8,7 +8,6 @@ import {
   FlatList,
   Image,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -17,26 +16,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-/* ===========================
-   Firebase
-   =========================== */
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
-/* ===========================
-   Theme (lấy từ Provider toàn cục)
-   =========================== */
 import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
-/* ===========================
-   i18n
-   =========================== */
 const I18N = {
   vi: {
     user: 'Người dùng',
-    levelSample: 'Lớp 5 – Nâng cao',
     noClass: 'Chưa chọn lớp',
     points: 'Điểm',
     badges: 'Huy hiệu',
@@ -53,22 +43,17 @@ const I18N = {
     notifications: 'Thông báo',
     notifStudy: 'Nhắc học bài hằng ngày',
     notifMarketing: 'Nhận tin khuyến mãi',
-    supportLegal: 'Hỗ trợ & pháp lý',
-    helpCenter: 'Trung tâm trợ giúp',
-    terms: 'Điều khoản & Chính sách',
     edit: 'Sửa',
     logout: 'Đăng xuất',
     loggedOut: 'Bạn đã đăng xuất.',
     noBadges: 'Chưa có huy hiệu nào — bắt đầu học để nhận huy hiệu nhé!',
     demoEmail: 'user@example.com',
-    linkDemo: 'Tính năng demo.',
     loading: 'Đang tải...',
     errorLoad: 'Tải hồ sơ thất bại.',
     pullToRefresh: 'Kéo để làm mới',
   },
   en: {
     user: 'User',
-    levelSample: 'Grade 5 – Advanced',
     noClass: 'No class selected',
     points: 'Points',
     badges: 'Badges',
@@ -85,9 +70,6 @@ const I18N = {
     notifications: 'Notifications',
     notifStudy: 'Daily study reminder',
     notifMarketing: 'Receive promotions',
-    supportLegal: 'Support & legal',
-    helpCenter: 'Help center',
-    terms: 'Terms & Policy',
     edit: 'Edit',
     logout: 'Log out',
     loggedOut: 'You have logged out.',
@@ -99,14 +81,14 @@ const I18N = {
   },
 } as const;
 
-type LangKey = keyof typeof I18N['vi'];
-function t(lang: 'vi' | 'en', key: LangKey) {
-  return I18N[lang][key] ?? key;
-}
+type Lang = 'vi' | 'en';
+const SETTINGS_KEYS = {
+  language: 'profile_language',
+  notifStudy: 'profile_notif_study',
+  notifMarketing: 'profile_notif_marketing',
+};
+function t(lang: Lang, key: keyof typeof I18N['vi']) { return I18N[lang][key]; }
 
-/* ===========================
-   Kiểu dữ liệu & const
-   =========================== */
 type BadgeItem = { id: string; title: string; icon: string };
 type UserProfile = {
   uid: string;
@@ -119,15 +101,6 @@ type UserProfile = {
   photoURL?: string | null;
 };
 
-const SETTINGS_KEYS = {
-  language: 'profile_language',
-  notifStudy: 'profile_notif_study',
-  notifMarketing: 'profile_notif_marketing',
-};
-
-/* ===========================
-   Styles
-   =========================== */
 function makeStyles(p: Palette) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: p.bg },
@@ -141,47 +114,30 @@ function makeStyles(p: Palette) {
     levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
     levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
     statsRow: { flexDirection: 'row', gap: 12 },
-    statCard: { flex: 1, backgroundColor: p.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: p.cardBorder, alignItems: 'flex-start', gap: 6 },
     statIconWrap: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
-    statValue: { color: p.text, fontSize: 18, fontWeight: '700' },
-    statLabel: { color: p.textMuted, fontSize: 12 },
-    cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    cardTitle: { color: p.text, fontSize: 16, fontWeight: '700' },
-    link: { color: p.link, fontSize: 13, fontWeight: '600' },
-    badge: { width: 110, height: 78, borderRadius: 12, borderWidth: 1, borderColor: p.cardBorder, backgroundColor: p.bg, padding: 10, justifyContent: 'center', gap: 6 },
-    badgeTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
-    empty: { marginTop: 10, color: p.textMuted, fontSize: 13 },
-    settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: p.divider },
-    settingLabel: { flex: 1, color: p.brand, fontSize: 14, fontWeight: '600' },
-    pickerValue: { marginRight: 6, color: p.textMuted, fontSize: 13 },
     logoutBtn: { marginTop: 6, backgroundColor: p.danger, borderRadius: 12, paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
     logoutTxt: { color: '#fff', fontWeight: '700' },
     editBtn: { flexDirection: 'row', gap: 6, backgroundColor: p.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
     editTxt: { color: p.editBtnText, fontWeight: '700' },
+    link: { color: p.link, fontSize: 13, fontWeight: '600' },
   });
 }
 
-/* ===========================
-   Component chính
-   =========================== */
 export default function ProfileScreen() {
   const router = useRouter();
-  const { themeName, colorScheme, palette, setTheme } = useTheme(); // lấy theme toàn cục
+  const { colorScheme, palette, setTheme } = useTheme();
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
-  // --------- UI/Settings state ----------
-  const [language, setLanguage] = useState<'vi' | 'en'>('vi');
+  const [language, setLanguage] = useState<Lang>('vi');
   const [notifStudy, setNotifStudy] = useState(true);
   const [notifMarketing, setNotifMarketing] = useState(false);
 
-  // --------- User/Auth state ----------
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // --------- Load settings khi mount ----------
   useEffect(() => {
     (async () => {
       const [l, s, m] = await Promise.all([
@@ -195,86 +151,53 @@ export default function ProfileScreen() {
     })();
   }, []);
 
-  // --------- Lắng nghe đăng nhập/đăng xuất ----------
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
-      if (!u) {
-        router.replace('/(auth)/login');
-      }
+      if (!u) router.replace('/(auth)/login');
     });
     return unsub;
   }, [router]);
 
-  // --------- Tải hồ sơ từ Firestore ----------
-  const fetchProfile = useCallback(
-    async (u: User) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const ref = doc(db, 'users', u.uid);
-        const snap = await getDoc(ref);
-        const data = snap.exists() ? (snap.data() as any) : {};
-
-        const profile: UserProfile = {
-          uid: u.uid,
-          name: u.displayName || data.name || t(language, 'user'),
-          email: u.email || data.email || t(language, 'demoEmail'),
-          photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
-          level: data.level ?? null,
-          points: typeof data.points === 'number' ? data.points : 0,
-          streak: typeof data.streak === 'number' ? data.streak : 0,
-          badges: Array.isArray(data.badges) ? data.badges : [],
-        };
-        setUser(profile);
-      } catch (e) {
-        console.error(e);
-        setError(t(language, 'errorLoad'));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [language]
-  );
-
-  useEffect(() => {
-    if (firebaseUser) fetchProfile(firebaseUser);
-  }, [firebaseUser, fetchProfile]);
-
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      (async () => {
-        if (active && firebaseUser) await fetchProfile(firebaseUser);
-      })();
-      return () => {
-        active = false;
+  const fetchProfile = useCallback(async (u: User) => {
+    setLoading(true); setError(null);
+    try {
+      const ref = doc(db, 'users', u.uid);
+      const snap = await getDoc(ref);
+      const data = snap.exists() ? (snap.data() as any) : {};
+      const profile: UserProfile = {
+        uid: u.uid,
+        name: u.displayName || data.name || t(language, 'user'),
+        email: u.email || data.email || t(language, 'demoEmail'),
+        photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
+        level: data.level ?? null,
+        points: typeof data.points === 'number' ? data.points : 0,
+        streak: typeof data.streak === 'number' ? data.streak : 0,
+        badges: Array.isArray(data.badges) ? data.badges : [],
       };
-    }, [firebaseUser, fetchProfile])
-  );
+      setUser(profile);
+    } catch (e) { console.error(e); setError(t(language, 'errorLoad')); }
+    finally { setLoading(false); }
+  }, [language]);
 
-  // --------- Persist helpers ----------
-  const persist = async (k: string, v: string | boolean) => {
-    await AsyncStorage.setItem(k, String(v));
-  };
+  useEffect(() => { if (firebaseUser) fetchProfile(firebaseUser); }, [firebaseUser, fetchProfile]);
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    (async () => { if (active && firebaseUser) await fetchProfile(firebaseUser); })();
+    return () => { active = false; };
+  }, [firebaseUser, fetchProfile]));
 
   const initials = useMemo(() => {
-    const n = user?.name?.trim() || '';
-    const parts = n.split(/\s+/);
+    const n = user?.name?.trim() || ''; const parts = n.split(/\s+/);
     const a = (parts[0]?.[0] || '').toUpperCase();
     const b = (parts[1]?.[0] || parts[0]?.[1] || '').toUpperCase();
     return (a + b).slice(0, 2) || 'U';
   }, [user?.name]);
 
   const onLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      Alert.alert(t(language, 'logout'), t(language, 'loggedOut'));
-      router.replace('/(auth)/login');
-    }
+    try { await signOut(auth); } catch (e) { console.error(e); }
+    finally { Alert.alert(t(language, 'logout'), t(language, 'loggedOut')); router.replace('/(auth)/login'); }
   };
 
   const onRefresh = useCallback(async () => {
@@ -284,11 +207,10 @@ export default function ProfileScreen() {
     setRefreshing(false);
   }, [firebaseUser, fetchProfile]);
 
-  // --------- UI: Loading / Error ----------
   if (!firebaseUser || loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+      <SafeAreaView style={styles.container} edges={['top','left','right']}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size="large" />
           <Text style={{ color: palette.textMuted }}>{t(language, 'loading')}</Text>
@@ -299,16 +221,12 @@ export default function ProfileScreen() {
 
   if (error || !user) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+      <SafeAreaView style={styles.container} edges={['top','left','right']}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
           <Text style={{ color: palette.danger }}>{error || t(language, 'errorLoad')}</Text>
-          <TouchableOpacity
-            style={[styles.editBtn, { backgroundColor: palette.brandSoft }]}
-            onPress={() => firebaseUser && fetchProfile(firebaseUser)}
-          >
-            <Ionicons name="refresh" size={18} color={palette.editBtnText} />
-            <Text style={styles.editTxt}>{t(language, 'pullToRefresh')}</Text>
+          <TouchableOpacity style={{ backgroundColor: palette.brandSoft, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }} onPress={() => firebaseUser && fetchProfile(firebaseUser)}>
+            <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>{t(language, 'pullToRefresh')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -316,85 +234,52 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+    <SafeAreaView style={styles.container} edges={['top','left','right']}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
+
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />
-        }
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
       >
-        {/* Header: Avatar + Tên + Email */}
+        {/* Header */}
         <View style={styles.card}>
           <View style={styles.row}>
             {user.photoURL ? (
-              <Image
-                source={{ uri: user.photoURL }}
-                style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }}
-                resizeMode="cover"
-              />
+              <Image source={{ uri: user.photoURL }} style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }} resizeMode="cover" />
             ) : (
-              <View style={styles.avatar}>
-                <Text style={styles.avatarTxt}>{initials}</Text>
-              </View>
+              <View style={styles.avatar}><Text style={styles.avatarTxt}>{initials}</Text></View>
             )}
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.name} numberOfLines={1}>
-                {user.name}
-              </Text>
-              <Text style={styles.email} numberOfLines={1}>
-                {user.email}
-              </Text>
+              <Text style={styles.name} numberOfLines={1}>{user.name}</Text>
+              <Text style={styles.email} numberOfLines={1}>{user.email}</Text>
 
-              <View
-                style={[
-                  styles.levelPill,
-                  { marginTop: 8 },
-                  !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' },
-                ]}
-              >
+              <View style={[styles.levelPill, { marginTop: 8 }, !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' }]}>
                 <Ionicons name="school-outline" size={16} color={palette.ionMain} />
                 <Text style={styles.levelTxt}>{user.level || t(language, 'noClass')}</Text>
               </View>
             </View>
 
-            <TouchableOpacity style={styles.editBtn} onPress={() => router.push('/(EditProfile)/edit')}>
+            <TouchableOpacity style={{ flexDirection: 'row', gap: 6, backgroundColor: palette.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' }} onPress={() => router.push('/(EditProfile)/edit')}>
               <Ionicons name="create-outline" size={18} color={palette.editBtnText} />
-              <Text style={styles.editTxt}>{t(language, 'edit')}</Text>
+              <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>{t(language, 'edit')}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Stats */}
-        <View style={styles.statsRow}>
-          <StatCard
-            icon="diamond-stone"
-            color="#9333EA"
-            label={t(language, 'points')}
-            value={String(user.points)}
-            palette={palette}
-          />
-          <StatCard
-            icon="medal-outline"
-            color={palette.mciGold}
-            label={t(language, 'badges')}
-            value={String(user.badges?.length || 0)}
-            palette={palette}
-          />
-        <StatCard
-            icon="fire"
-            color={palette.streak}
-            label={t(language, 'streak')}
-            value={`${user.streak} ${t(language, 'days')}`}
-            palette={palette}
-          />
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <StatCard icon="diamond-stone" color="#9333EA" label={t(language, 'points')} value={String(user.points)} palette={palette} />
+          <StatCard icon="medal-outline" color={palette.mciGold} label={t(language, 'badges')} value={String(user.badges?.length || 0)} palette={palette} />
+          <StatCard icon="fire" color={palette.streak} label={t(language, 'streak')} value={`${user.streak} ${t(language, 'days')}`} palette={palette} />
         </View>
 
         {/* Badges */}
         <View style={styles.card}>
-          <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>{t(language, 'earnedBadges')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>{t(language, 'earnedBadges')}</Text>
             <TouchableOpacity onPress={() => router.push('/profile/Badges')}>
               <Text style={styles.link}>{t(language, 'viewAll')}</Text>
             </TouchableOpacity>
@@ -408,80 +293,38 @@ export default function ProfileScreen() {
               contentContainerStyle={{ gap: 12 }}
               keyExtractor={(b) => b.id}
               renderItem={({ item }) => (
-                <View style={styles.badge}>
+                <View style={{ width: 110, height: 78, borderRadius: 12, borderWidth: 1, borderColor: palette.cardBorder, backgroundColor: palette.bg, padding: 10, justifyContent: 'center', gap: 6 }}>
                   <MaterialCommunityIcons name={item.icon as any} size={22} color={palette.mciGold} />
-                  <Text style={styles.badgeTxt} numberOfLines={1}>
-                    {item.title}
-                  </Text>
+                  <Text style={{ color: palette.textFaint, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
                 </View>
               )}
             />
           ) : (
-            <Text style={styles.empty}>{t(language, 'noBadges')}</Text>
+            <Text style={{ marginTop: 10, color: palette.textMuted, fontSize: 13 }}>{t(language, 'noBadges')}</Text>
           )}
         </View>
 
-        {/* Account Settings */}
+        {/* Account */}
         <Section title={t(language, 'account')} palette={palette}>
-          <SettingItem
-            icon="key-outline"
-            label={t(language, 'changePassword')}
-            onPress={() => router.push('/profile/ChangePassword')}
-            palette={palette}
-          />
-          <SettingItem
-            icon="logo-google"
-            label={t(language, 'linkGoogle')}
-            onPress={() => Alert.alert(t(language, 'linkGoogle'), t(language, 'linkDemo'))}
-            palette={palette}
-          />
+          <SettingItem icon="key-outline" label={t(language, 'changePassword')} onPress={() => router.push('/profile/ChangePassword')} palette={palette} />
+          <SettingItem icon="logo-google" label={t(language, 'linkGoogle')} onPress={() => Alert.alert(t(language, 'linkGoogle'), 'Demo')} palette={palette} />
         </Section>
 
         {/* App Settings */}
         <Section title={t(language, 'appSettings')} palette={palette}>
-          <SettingSwitch
-            icon="moon-outline"
-            label={t(language, 'darkMode')}
-            value={colorScheme === 'dark'}
-            onValueChange={(v) => setTheme(v ? 'dark' : 'light')}
-            palette={palette}
-          />
-          <SettingPicker
-            icon="language-outline"
-            label={t(language, 'language')}
-            value={language === 'vi' ? 'Tiếng Việt' : 'English'}
-            onPress={async () => {
-              const next = language === 'vi' ? 'en' : 'vi';
-              setLanguage(next);
-              await AsyncStorage.setItem(SETTINGS_KEYS.language, next);
-              if (firebaseUser) fetchProfile(firebaseUser);
-            }}
-            palette={palette}
-          />
+          <SettingSwitch icon="moon-outline" label={t(language, 'darkMode')} value={colorScheme === 'dark'} onValueChange={(v) => setTheme(v ? 'dark' : 'light')} palette={palette} />
+          <SettingPicker icon="language-outline" label={t(language, 'language')} value={language === 'vi' ? 'Tiếng Việt' : 'English'} onPress={async () => {
+            const next = language === 'vi' ? 'en' : 'vi';
+            setLanguage(next);
+            await AsyncStorage.setItem(SETTINGS_KEYS.language, next);
+            if (firebaseUser) fetchProfile(firebaseUser);
+          }} palette={palette} />
         </Section>
 
         {/* Notifications */}
         <Section title={t(language, 'notifications')} palette={palette}>
-          <SettingSwitch
-            icon="notifications-outline"
-            label={t(language, 'notifStudy')}
-            value={notifStudy}
-            onValueChange={(v) => {
-              setNotifStudy(v);
-              AsyncStorage.setItem(SETTINGS_KEYS.notifStudy, String(v));
-            }}
-            palette={palette}
-          />
-          <SettingSwitch
-            icon="megaphone-outline"
-            label={t(language, 'notifMarketing')}
-            value={notifMarketing}
-            onValueChange={(v) => {
-              setNotifMarketing(v);
-              AsyncStorage.setItem(SETTINGS_KEYS.notifMarketing, String(v));
-            }}
-            palette={palette}
-          />
+          <SettingSwitch icon="notifications-outline" label={t(language, 'notifStudy')} value={notifStudy} onValueChange={(v) => { setNotifStudy(v); AsyncStorage.setItem(SETTINGS_KEYS.notifStudy, String(v)); }} palette={palette} />
+          <SettingSwitch icon="megaphone-outline" label={t(language, 'notifMarketing')} value={notifMarketing} onValueChange={(v) => { setNotifMarketing(v); AsyncStorage.setItem(SETTINGS_KEYS.notifMarketing, String(v)); }} palette={palette} />
         </Section>
 
         {/* Logout */}
@@ -497,25 +340,9 @@ export default function ProfileScreen() {
 }
 
 /* ---------- Sub Components ---------- */
-
-function StatCard({
-  icon,
-  label,
-  value,
-  color,
-  palette,
-}: {
-  icon: any;
-  label: string;
-  value: string;
-  color: string;
-  palette: Palette;
-}) {
+function StatCard({ icon, label, value, color, palette }: { icon: any; label: string; value: string; color: string; palette: Palette; }) {
   return (
-    <View style={{
-      flex: 1, backgroundColor: palette.card, borderRadius: 14, padding: 12,
-      borderWidth: 1, borderColor: palette.cardBorder, alignItems: 'flex-start', gap: 6
-    }}>
+    <View style={{ flex: 1, backgroundColor: palette.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: palette.cardBorder, alignItems: 'flex-start', gap: 6 }}>
       <View style={{ borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: `${color}${palette.statIconBgAlpha}` }}>
         <MaterialCommunityIcons name={icon} size={18} color={color} />
       </View>
@@ -525,15 +352,7 @@ function StatCard({
   );
 }
 
-function Section({
-  title,
-  children,
-  palette,
-}: {
-  title: string;
-  children: React.ReactNode;
-  palette: Palette;
-}) {
+function Section({ title, children, palette }: { title: string; children: React.ReactNode; palette: Palette; }) {
   return (
     <View style={{ backgroundColor: palette.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: palette.cardBorder }}>
       <Text style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>{title}</Text>
@@ -542,22 +361,9 @@ function Section({
   );
 }
 
-function SettingItem({
-  icon,
-  label,
-  onPress,
-  palette,
-}: {
-  icon: any;
-  label: string;
-  onPress?: () => void;
-  palette: Palette;
-}) {
+function SettingItem({ icon, label, onPress, palette }: { icon: any; label: string; onPress?: () => void; palette: Palette; }) {
   return (
-    <TouchableOpacity
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}
-      onPress={onPress}
-    >
+    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }} onPress={onPress}>
       <Ionicons name={icon} size={20} color={palette.ionMain} />
       <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
       <Ionicons name="chevron-forward" size={18} color={palette.ionMuted} />
@@ -565,51 +371,19 @@ function SettingItem({
   );
 }
 
-function SettingSwitch({
-  icon,
-  label,
-  value,
-  onValueChange,
-  palette,
-}: {
-  icon: any;
-  label: string;
-  value: boolean;
-  onValueChange: (v: boolean) => void;
-  palette: Palette;
-}) {
+function SettingSwitch({ icon, label, value, onValueChange, palette }: { icon: any; label: string; value: boolean; onValueChange: (v: boolean) => void; palette: Palette; }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}>
       <Ionicons name={icon} size={20} color={palette.ionMain} />
       <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-        thumbColor={value ? '#2563EB' : '#ffffff'}
-      />
+      <Switch value={value} onValueChange={onValueChange} trackColor={{ false: '#CBD5E1', true: '#93C5FD' }} thumbColor={value ? '#2563EB' : '#ffffff'} />
     </View>
   );
 }
 
-function SettingPicker({
-  icon,
-  label,
-  value,
-  onPress,
-  palette,
-}: {
-  icon: any;
-  label: string;
-  value: string;
-  onPress?: () => void;
-  palette: Palette;
-}) {
+function SettingPicker({ icon, label, value, onPress, palette }: { icon: any; label: string; value: string; onPress?: () => void; palette: Palette; }) {
   return (
-    <TouchableOpacity
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}
-      onPress={onPress}
-    >
+    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }} onPress={onPress}>
       <Ionicons name={icon} size={20} color={palette.ionMain} />
       <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
       <Text style={{ marginRight: 6, color: palette.textMuted, fontSize: 13 }}>{value}</Text>

@@ -1,12 +1,12 @@
 // app/(admin)/users/index.tsx
 
 /* ---------- Imports ---------- */
-import { auth, db } from '@/scripts/firebase'; // <-- thêm auth
+import { auth, db } from '@/scripts/firebase';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import {
   collection,
-  deleteDoc, // <-- quan trọng
+  deleteDoc,
   doc,
   getDocs,
   limit,
@@ -108,11 +108,21 @@ export default function UsersScreen() {
   /* ---------- Toggle Block User ---------- */
   const toggleBlock = async (u: U) => {
     try {
+      const willBlock = !u.blocked;
+
       await updateDoc(doc(db, 'users', u.id), {
-        blocked: !u.blocked,
+        blocked: willBlock,
         updatedAt: serverTimestamp(),
+        // Khi mở khóa (blocked: false), phát tín hiệu buộc đăng xuất client
+        ...(willBlock === false
+          ? {
+              forceLogoutAt: serverTimestamp(),
+              forceLogoutReason: 'unlock',
+            }
+          : {}),
       });
-      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, blocked: !u.blocked } : x)));
+
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, blocked: willBlock } : x)));
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message ?? 'Không cập nhật được trạng thái.');
     }
@@ -320,7 +330,7 @@ export default function UsersScreen() {
                   <Text style={{ color: '#ef4444', fontWeight: '700' }}>Delete</Text>
                 </TouchableOpacity>
 
-                {/* Block / Unblock (vẫn cho phép tự khóa/mở nếu bạn muốn; nếu không thì disable tương tự isSelf) */}
+                {/* Block / Unblock */}
                 <TouchableOpacity
                   onPress={() => toggleBlock(item)}
                   style={{

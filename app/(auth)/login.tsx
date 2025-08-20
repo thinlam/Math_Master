@@ -35,7 +35,7 @@ function routeByRole(
 ) {
   const r = role ?? 'user';
   if (r === 'admin') return router.replace('/(admin)/home');
-  if (r === 'premium') return router.replace('/premium-home');
+  if (r === 'premium') return router.replace('/(tabs)');
 
   // user: đã setup thì vào tabs, chưa thì vào onboarding
   if (opts?.startMode || opts?.level !== null) {

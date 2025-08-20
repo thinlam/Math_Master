@@ -11,7 +11,7 @@ import {
   limit,
   orderBy,
   query,
-  Timestamp,
+  Timestamp
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -28,7 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /* ---------- Types ---------- */
 type QuickStat = {
-  key: 'users' | 'lessons' | 'reports';
+  key: 'users' | 'lessons' | 'reports' | 'subscriptions';
   label: string;
   value: number;
   icon:
@@ -45,8 +45,15 @@ type RecentItem = {
   subtitle?: string;
   /** có thể là Timestamp | Date | string | null (khi serverTimestamp chưa resolve) */
   createdAt?: any;
-  type: 'user' | 'lesson' | 'report';
+  type: 'user' | 'lesson' | 'report' | 'subscription';
   role?: 'admin' | 'premium' | 'user' | string;
+
+  // fields riêng cho subscription (nếu type === 'subscription')
+  planId?: string;
+  status?: 'active' | 'cancelled' | 'expired' | string;
+  uid?: string;
+  startedAt?: any;
+  expiresAt?: any;
 };
 
 /* ---------- Utils: chuẩn hoá ngày ---------- */
@@ -78,51 +85,58 @@ export default function AdminHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [stats, setStats] = useState<{ users: number; lessons: number; reports: number }>({
+  const [stats, setStats] = useState<{ users: number; lessons: number; reports: number; subscriptions: number }>({
     users: 0,
     lessons: 0,
     reports: 0,
+    subscriptions: 0,
   });
 
   const [recentUsers, setRecentUsers] = useState<RecentItem[]>([]);
   const [recentLessons, setRecentLessons] = useState<RecentItem[]>([]);
   const [recentReports, setRecentReports] = useState<RecentItem[]>([]);
+  const [recentSubs, setRecentSubs] = useState<RecentItem[]>([]);
 
   /* ---------- Load Data ---------- */
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
 
-      const [usersSnap, lessonsSnap, reportsSnap] = await Promise.all([
+      const [usersSnap, lessonsSnap, reportsSnap, subsSnap] = await Promise.all([
         getCountFromServer(collection(db, 'users')),
         getCountFromServer(collection(db, 'lessons')),
         getCountFromServer(collection(db, 'reports')),
+        getCountFromServer(collection(db, 'subscriptions')),
       ]);
 
       setStats({
         users: usersSnap.data().count,
         lessons: lessonsSnap.data().count,
         reports: reportsSnap.data().count,
+        subscriptions: subsSnap.data().count,
       });
 
       const recentUsersQ = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(5));
       const recentLessonsQ = query(collection(db, 'lessons'), orderBy('createdAt', 'desc'), limit(5));
       const recentReportsQ = query(collection(db, 'reports'), orderBy('createdAt', 'desc'), limit(5));
+      // Subscriptions nên order theo startedAt (nếu bạn lưu createdAt thì có thể dùng createdAt)
+      const recentSubsQ = query(collection(db, 'subscriptions'), orderBy('startedAt', 'desc'), limit(5));
 
-      const [uDocs, lDocs, rDocs] = await Promise.all([
+      const [uDocs, lDocs, rDocs, sDocs] = await Promise.all([
         getDocs(recentUsersQ),
         getDocs(recentLessonsQ),
         getDocs(recentReportsQ),
+        getDocs(recentSubsQ),
       ]);
 
       setRecentUsers(
         uDocs.docs.map((d) => {
-          const data = d.data() || {};
+          const data: any = d.data() || {};
           return {
             id: d.id,
             title: (data.name as string) || (data.email as string) || d.id,
             subtitle: data.email ?? undefined,
-            createdAt: data.createdAt ?? null, // có thể là FieldValue -> để any, formatDate sẽ an toàn
+            createdAt: data.createdAt ?? null,
             type: 'user',
             role: (data.role as RecentItem['role']) || 'user',
           } satisfies RecentItem;
@@ -131,7 +145,7 @@ export default function AdminHome() {
 
       setRecentLessons(
         lDocs.docs.map((d) => {
-          const data = d.data() || {};
+          const data: any = d.data() || {};
           return {
             id: d.id,
             title: (data.title as string) || d.id,
@@ -144,13 +158,31 @@ export default function AdminHome() {
 
       setRecentReports(
         rDocs.docs.map((d) => {
-          const data = d.data() || {};
+          const data: any = d.data() || {};
           return {
             id: d.id,
             title: (data.title as string) || `Report #${d.id.slice(0, 6)}`,
             subtitle: data.reason ?? data.status ?? undefined,
             createdAt: data.createdAt ?? null,
             type: 'report',
+          } satisfies RecentItem;
+        })
+      );
+
+      setRecentSubs(
+        sDocs.docs.map((d) => {
+          const data: any = d.data() || {};
+          return {
+            id: d.id,
+            title: data.planId ? String(data.planId) : `Sub #${d.id.slice(0, 6)}`,
+            subtitle: `UID: ${data.uid ?? '—'}`,
+            createdAt: data.startedAt ?? data.createdAt ?? null,
+            type: 'subscription',
+            planId: data.planId ?? undefined,
+            status: data.status ?? undefined,
+            uid: data.uid ?? undefined,
+            startedAt: data.startedAt ?? null,
+            expiresAt: data.expiresAt ?? null,
           } satisfies RecentItem;
         })
       );
@@ -202,6 +234,15 @@ export default function AdminHome() {
         bg: 'rgba(234,88,12,0.1)',
         iconLib: 'mci',
       },
+      {
+        key: 'subscriptions',
+        label: 'Gói Premium',
+        value: stats.subscriptions,
+        icon: 'star-outline',
+        color: '#a855f7',
+        bg: 'rgba(168,85,247,0.12)',
+        iconLib: 'ion',
+      },
     ],
     [stats]
   );
@@ -243,12 +284,13 @@ export default function AdminHome() {
             </View>
 
             {/* ---------- Quick Stats ---------- */}
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
               {quickStats.map((s) => (
                 <View
                   key={s.key}
                   style={{
-                    flex: 1,
+                    flexGrow: 1,
+                    minWidth: '47%',
                     backgroundColor: 'rgba(255,255,255,0.06)',
                     borderRadius: 16,
                     padding: 14,
@@ -295,13 +337,14 @@ export default function AdminHome() {
                 <QuickAction icon="megaphone-outline" label="Thông báo" onPress={() => go(router, 'announcements')} />
                 <QuickAction icon="settings-outline" label="Cấu hình" onPress={() => go(router, 'admin-config')} />
                 <QuickAction icon="library-outline" label="Quản lý Library" onPress={() => go(router, 'library')} />
-
+                {/* NEW: Quản lý gói */}
+                <QuickAction icon="star-outline" label="Quản lý gói" onPress={() => go(router, 'subscriptions')} />
               </View>
             </View>
 
             {/* ---------- Recent Lists ---------- */}
-            {/* <Section title="Người dùng mới" actionLabel="Xem tất cả" onAction={() => go(router, 'users')}>
-              <RecentListSimple data={recentUsers} empty="Chưa có dữ liệu." />
+            {/* <Section title="Gói Premium gần đây" actionLabel="Xem tất cả" onAction={() => go(router, 'subscriptions')}>
+              <RecentSubList data={recentSubs} empty="Chưa có gói nào." />
             </Section> */}
 
             <Section title="Bài học mới" actionLabel="Xem tất cả" onAction={() => go(router, 'lessons')}>
@@ -352,7 +395,7 @@ export default function AdminHome() {
 /* ---------- Sub Components ---------- */
 function go(
   router: ReturnType<typeof useRouter>,
-  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config'| 'library'
+  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config' | 'library' | 'subscriptions'
 ) {
   switch (dest) {
     case 'users': router.push('../users'); break;
@@ -363,6 +406,7 @@ function go(
     case 'settings': router.push('/(admin)/settings'); break;
     case 'admin-config': router.push('/(admin)/admin-config'); break;
     case 'library': router.push('/(admin)/library'); break;
+    case 'subscriptions': router.push('/(admin)/subscriptions'); break; // <-- NEW
   }
 }
 
@@ -463,16 +507,67 @@ function RecentListSimple({ data, empty }: { data: RecentItem[]; empty: string }
   );
 }
 
+/** Danh sách subscription gần đây (không dùng FlatList con) */
+function RecentSubList({ data, empty }: { data: RecentItem[]; empty: string }) {
+  if (!data.length) return <Text style={{ color: '#94a3b8' }}>{empty}</Text>;
+  return (
+    <View>
+      {data.map((s, idx) => (
+        <View key={s.id}>
+          <View
+            style={{
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              borderRadius: 12,
+              padding: 12,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.1)',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <Text style={{ color: '#e2e8f0', fontWeight: '700', flex: 1 }}>
+                {s.planId ?? s.title}
+              </Text>
+              <SubStatusBadge status={s.status ?? 'active'} />
+            </View>
+            <Text style={{ color: '#94a3b8', marginTop: 2 }}>
+              UID: {s.uid ?? '—'}
+            </Text>
+            <Text style={{ color: '#64748b', marginTop: 4, fontSize: 12 }}>
+              {`Bắt đầu: ${formatDate(s.startedAt)} • Hết hạn: ${formatDate(s.expiresAt)}`}
+            </Text>
+          </View>
+          {idx < data.length - 1 && <View style={{ height: 8 }} />}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function RoleBadge({ role }: { role: string }) {
   const map: Record<
     string,
     { label: string; bg: string; color: string; icon: React.ComponentProps<typeof Ionicons>['name'] }
   > = {
-    admin: { label: 'Admin', bg: 'rgba(239,68,68,0.15)', color: '#ef4444', icon: 'shield-checkmark-outline' },
+    admin:   { label: 'Admin',   bg: 'rgba(239,68,68,0.15)',  color: '#ef4444', icon: 'shield-checkmark-outline' },
     premium: { label: 'Premium', bg: 'rgba(168,85,247,0.15)', color: '#a855f7', icon: 'star-outline' },
-    user: { label: 'User', bg: 'rgba(148,163,184,0.15)', color: '#94a3b8', icon: 'person-outline' },
+    user:    { label: 'User',    bg: 'rgba(148,163,184,0.15)',color: '#94a3b8', icon: 'person-outline' },
   };
   const style = map[role] ?? map.user;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: style.bg }}>
+      <Ionicons name={style.icon} size={14} color={style.color} />
+      <Text style={{ color: style.color, fontWeight: '700', fontSize: 12 }}>{style.label}</Text>
+    </View>
+  );
+}
+
+function SubStatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; bg: string; color: string; icon: React.ComponentProps<typeof Ionicons>['name'] }> = {
+    active:    { label: 'Active',    bg: 'rgba(22,163,74,0.15)',  color: '#16a34a', icon: 'checkmark-circle-outline' },
+    cancelled: { label: 'Cancelled', bg: 'rgba(234,179,8,0.15)', color: '#eab308', icon: 'pause-circle-outline' },
+    expired:   { label: 'Expired',   bg: 'rgba(107,114,128,0.15)', color: '#6b7280', icon: 'time-outline' },
+  };
+  const style = map[status] ?? map.active;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: style.bg }}>
       <Ionicons name={style.icon} size={14} color={style.color} />

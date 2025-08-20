@@ -1,5 +1,6 @@
 // app/(tabs)/Store.tsx
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -18,68 +19,60 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 /* Theme */
 import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
-/* (TÙY CHỌN) Dịch vụ thanh toán đa cổng
-   Tạo theo kiến trúc đã hướng dẫn:
-   - @/services/payments/index.ts (export payWith)
-   - @/services/payments/providers/iap.ts, momo.ts, zalopay.ts, vnpay.ts
-*/
-let payWith: (provider: 'iap' | 'momo' | 'zalopay' | 'vnpay', item: StoreItem, userId?: string) => Promise<{ status: 'opened' | 'completed' | 'cancelled' }>;
-try {
-   
-  payWith = require('@/services/payments').payWith;
-} catch {
-  // Fallback demo: nếu chưa tạo services/payments
-  payWith = async (provider, item) => {
-    await new Promise(r => setTimeout(r, 900));
-    Alert.alert('Demo', `Gọi thanh toán [${provider}] cho: ${item.title}`);
-    return { status: 'opened' };
-  };
-}
-
-/* Nếu bạn muốn lấy userId thực từ Firebase thì mở comment:
+/* Firebase */
 import { auth } from '@/scripts/firebase';
-*/
+
+/* Thanh toán + Cấp quyền */
+import { payWith } from '@/services/payments';
+import { grantPremium } from '@/services/subscription'; // <— sửa đúng path (số nhiều)
 
 type StoreItem = {
   id: string;
   title: string;
   desc: string;
-  price: number;
+  price: number; // VND
   icon: keyof typeof Ionicons.glyphMap;
-  iapProductId?: string; // id sản phẩm trên App Store/Play nếu dùng IAP
+  iapProductId?: string;
   type?: 'consumable' | 'non_consumable' | 'subscription';
 };
 
 const ITEMS: StoreItem[] = [
-  { id: 'coins100',  title: '100 xu',            desc: 'Dùng để mở khóa bài học', price: 10000, icon: 'cash-outline',   iapProductId: 'coins_100',  type: 'consumable' },
-  { id: 'coins500',  title: '500 xu',            desc: 'Tiết kiệm hơn',           price: 45000, icon: 'wallet-outline', iapProductId: 'coins_500',  type: 'consumable' },
-  { id: 'premium1m', title: 'Gói Premium 1 tháng', desc: 'Mở toàn bộ nội dung',   price: 99000, icon: 'star-outline',   iapProductId: 'premium_1m', type: 'subscription' },
+  { id: 'premium1m', title: 'Gói Premium 1 tháng', desc: 'Mở toàn bộ nội dung trong 30 ngày', price: 99000, icon: 'star-outline', iapProductId: 'premium_1m', type: 'subscription' },
+  { id: 'premium6m', title: 'Gói Premium 6 tháng', desc: 'Tiết kiệm ~15% so với trả theo tháng', price: 499000, icon: 'star-outline', iapProductId: 'premium_6m', type: 'subscription' },
+  { id: 'premium1y', title: 'Gói Premium 1 năm', desc: 'Tiết kiệm ~25% so với trả theo tháng', price: 899000, icon: 'star-outline', iapProductId: 'premium_1y', type: 'subscription' },
 ];
 
 export default function StoreScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { palette, colorScheme } = useTheme();
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
-  // loading theo từng item + provider
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
 
-  // Lấy userId nếu cần xác minh server (mở khi đã có Firebase Auth)
-  // const userId = auth.currentUser?.uid;
-
-  const canShowWallets = Platform.OS === 'android'; // Ẩn ví trên iOS cho digital goods để tránh vi phạm policy
+  const canShowWallets = Platform.OS === 'android'; // tránh vi phạm policy iOS
 
   const buy = async (item: StoreItem, provider: 'iap' | 'momo' | 'zalopay' | 'vnpay') => {
     const key = `${item.id}:${provider}`;
     try {
+      const userId = auth.currentUser?.uid;
+      if (!userId) {
+        Alert.alert('Cần đăng nhập', 'Vui lòng đăng nhập trước khi mua.');
+        return;
+      }
       setLoadingKey(key);
-      const result = await payWith(provider, item /* , userId */);
-      // Trạng thái 'completed' với IAP có thể là đã mua xong; nhưng QUYỀN nên cấp khi backend/receipt verify xong.
+
+      // 1) Mở UI thanh toán (sandbox có bottom sheet thật)
+      const result = await payWith(provider, item, userId);
+
+      // 2) Nếu user hoàn tất → cấp premium ngay (auto-extend nếu đã có hạn)
       if (result.status === 'completed') {
-        Alert.alert('Thành công', 'Đang xác minh giao dịch. Kéo để làm mới số xu/quyền truy cập sau ít giây.');
+        await grantPremium(userId, item.id as any, provider); // truyền provider để log nguồn
+        Alert.alert('Thành công', 'Tài khoản đã được nâng cấp Premium. Mở lại trang là thấy hiệu lực ngay!');
       } else if (result.status === 'opened') {
-        // Với ví/VNPay: IPN mới là quyết định cuối cùng, nên chỉ thông báo đã chuyển qua cổng thanh toán
-        // Không làm gì thêm tại đây.
+        // Người dùng đang ở màn thanh toán; không làm gì thêm
+      } else if (result.status === 'cancelled') {
+        // Người dùng hủy
       }
     } catch (e: any) {
       Alert.alert('Thanh toán thất bại', e?.message ?? 'Vui lòng thử lại.');
@@ -89,32 +82,34 @@ export default function StoreScreen() {
   };
 
   const confirmBuy = (item: StoreItem, provider: 'iap' | 'momo' | 'zalopay' | 'vnpay') => {
-    // Bạn có thể bỏ Alert này nếu muốn bấm là mua luôn
     Alert.alert(
       'Xác nhận',
       `Mua ${item.title} qua ${labelOf(provider)} với giá ${item.price.toLocaleString()}đ?`,
-      [
-        { text: 'Hủy' },
-        { text: 'Đồng ý', onPress: () => buy(item, provider) },
-      ],
+      [{ text: 'Hủy' }, { text: 'Đồng ý', onPress: () => buy(item, provider) }],
     );
   };
 
   return (
     <SafeAreaView style={[styles.safe, { paddingTop: insets.top }]}>
-      <StatusBar
-        barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={palette.bg}
-      />
-
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>🛒 Cửa hàng</Text>
+        {/* Header + nút Theo dõi gói */}
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>⭐ Gói Premium</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/(tabs)/premium/Status')}
+            style={styles.trackBtn}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="reader-outline" size={16} color={palette.editBtnText} />
+            <Text style={[styles.trackLabel, { color: palette.editBtnText }]}>Theo dõi gói</Text>
+          </TouchableOpacity>
+        </View>
 
-        {/* Gợi ý chính sách ngắn gọn */}
         <View style={styles.noteBox}>
           <Ionicons name="information-circle-outline" size={18} color={palette.textMuted} />
           <Text style={styles.noteText}>
-            Nội dung số (xu, premium) trên iOS nên dùng In‑App Purchase. Ví (MoMo/ZaloPay/VNPay) hiển thị trên Android.
+            Trên iOS, nội dung số nên thanh toán qua In‑App Purchase. Các ví (MoMo/ZaloPay/VNPay) chỉ hiển thị trên Android.
           </Text>
         </View>
 
@@ -125,7 +120,7 @@ export default function StoreScreen() {
           const vnpKey = `${item.id}:vnpay`;
 
           return (
-            <View key={item.id} style={[styles.card]}>
+            <View key={item.id} style={styles.card}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <View style={styles.iconCircle}>
                   <Ionicons name={item.icon} size={22} color={palette.editBtnText} />
@@ -137,38 +132,13 @@ export default function StoreScreen() {
                 <Text style={styles.price}>{item.price.toLocaleString()}đ</Text>
               </View>
 
-              {/* Hàng nút thanh toán */}
               <View style={styles.btnRow}>
-                <PayBtn
-                  label="Thanh toán In‑App"
-                  icon="card-outline"
-                  onPress={() => confirmBuy(item, 'iap')}
-                  loading={loadingKey === iapKey}
-                  p={palette}
-                />
+                <PayBtn label="Thanh toán In‑App" icon="card-outline" onPress={() => confirmBuy(item, 'iap')} loading={loadingKey === iapKey} p={palette} />
                 {canShowWallets && (
                   <>
-                    <PayBtn
-                      label="MoMo"
-                      icon="logo-usd" // Ionicons không có logo momo, dùng tạm
-                      onPress={() => confirmBuy(item, 'momo')}
-                      loading={loadingKey === momoKey}
-                      p={palette}
-                    />
-                    <PayBtn
-                      label="ZaloPay"
-                      icon="cash-outline"
-                      onPress={() => confirmBuy(item, 'zalopay')}
-                      loading={loadingKey === zaloKey}
-                      p={palette}
-                    />
-                    <PayBtn
-                      label="VNPay"
-                      icon="pricetag-outline"
-                      onPress={() => confirmBuy(item, 'vnpay')}
-                      loading={loadingKey === vnpKey}
-                      p={palette}
-                    />
+                    <PayBtn label="MoMo" icon="logo-usd" onPress={() => confirmBuy(item, 'momo')} loading={loadingKey === momoKey} p={palette} />
+                    <PayBtn label="ZaloPay" icon="cash-outline" onPress={() => confirmBuy(item, 'zalopay')} loading={loadingKey === zaloKey} p={palette} />
+                    <PayBtn label="VNPay" icon="pricetag-outline" onPress={() => confirmBuy(item, 'vnpay')} loading={loadingKey === vnpKey} p={palette} />
                   </>
                 )}
               </View>
@@ -182,20 +152,9 @@ export default function StoreScreen() {
   );
 }
 
-/* ---------- Nút thanh toán nhỏ ---------- */
 function PayBtn({
-  label,
-  icon,
-  onPress,
-  loading,
-  p,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  onPress: () => void;
-  loading?: boolean;
-  p: Palette;
-}) {
+  label, icon, onPress, loading, p,
+}: { label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void; loading?: boolean; p: Palette; }) {
   return (
     <TouchableOpacity
       style={[stylesBtn.btn, { backgroundColor: p.brandSoft, borderColor: p.cardBorder }]}
@@ -215,7 +174,6 @@ function PayBtn({
   );
 }
 
-/* ---------- Helper ---------- */
 function labelOf(provider: 'iap' | 'momo' | 'zalopay' | 'vnpay') {
   switch (provider) {
     case 'iap': return 'In‑App (Store)';
@@ -225,56 +183,30 @@ function labelOf(provider: 'iap' | 'momo' | 'zalopay' | 'vnpay') {
   }
 }
 
-/* ---------- Styles theo theme ---------- */
 function makeStyles(p: Palette) {
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: p.bg },
     container: { padding: 16 },
-    title: { fontSize: 22, fontWeight: '700', color: p.text, marginBottom: 14 },
-    noteBox: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      backgroundColor: p.card,
-      borderColor: p.cardBorder,
-      borderWidth: 1,
-      padding: 10,
-      borderRadius: 10,
-      marginBottom: 12,
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    title: { fontSize: 22, fontWeight: '700', color: p.text },
+    trackBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      backgroundColor: p.brandSoft, borderColor: p.cardBorder, borderWidth: 1,
+      paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10,
     },
+    trackLabel: { fontSize: 12, fontWeight: '700' },
+
+    noteBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: p.card, borderColor: p.cardBorder, borderWidth: 1, padding: 10, borderRadius: 10, marginBottom: 12 },
     noteText: { color: p.textMuted, fontSize: 12, flex: 1 },
-    card: {
-      backgroundColor: p.card,
-      padding: 14,
-      borderRadius: 12,
-      marginBottom: 12,
-      borderWidth: 1,
-      borderColor: p.cardBorder,
-    },
-    iconCircle: {
-      width: 42,
-      height: 42,
-      borderRadius: 21,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: p.brandSoft,
-    },
+    card: { backgroundColor: p.card, padding: 14, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: p.cardBorder },
+    iconCircle: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: p.brandSoft },
     itemTitle: { fontSize: 16, fontWeight: '700', color: p.text },
     desc: { color: p.textMuted, fontSize: 13, marginTop: 2 },
-    price: { fontWeight: '800', color: '#10B981' }, // giữ màu xanh giá để nổi bật
+    price: { fontWeight: '800', color: '#10B981' },
     btnRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   });
 }
-
 const stylesBtn = StyleSheet.create({
-  btn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
+  btn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   label: { fontSize: 12, fontWeight: '700' },
 });
