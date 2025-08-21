@@ -4,7 +4,6 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import {
-  sendPasswordResetEmail,
   signInWithEmailAndPassword
 } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
@@ -139,21 +138,10 @@ export default function LoginScreen() {
    *  Quên mật khẩu
    *  -------------------------------------------------------
    */
-  const onForgot = async () => {
-    if (!/\S+@\S+\.\S+/.test(email)) {
-      Alert.alert('Email chưa hợp lệ', 'Nhập email để nhận liên kết đặt lại mật khẩu.');
-      return;
-    }
-    try {
-      setLoading(true);
-      await sendPasswordResetEmail(auth, email.trim());
-      Alert.alert('Đã gửi', 'Hãy kiểm tra hộp thư để đặt lại mật khẩu.');
-    } catch (e: any) {
-      Alert.alert('Lỗi', e?.message ?? 'Không gửi được email đặt lại mật khẩu.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const onForgot = () => {
+  // Điều hướng sang trang ForgotPassword, truyền sẵn email nếu đã nhập
+  router.push({ pathname: '/(auth)/ForgotPassword', params: { email } });
+};
 
   /** -------------------------------------------------------
    *  (Tuỳ chọn) Đăng nhập Google sau này

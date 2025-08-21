@@ -16,7 +16,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.juno1.Math_Master"
     },
     "web": {
       "bundler": "metro",
@@ -37,6 +38,13 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "brand": "mathmaster",
+      "router": {},
+      "eas": {
+        "projectId": "a0d0bb70-b3de-4b24-9a16-ccb698ef9e8e"
+      }
     }
   }
 }
