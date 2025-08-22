@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Text,
@@ -17,15 +18,15 @@ import {
 // Độ dài OTP
 const OTP_LENGTH = 6;
 
-// Thời gian cooldown gửi lại (giây)
+// Thời gian cooldown mặc định (giây) nếu server không trả về thời gian còn lại
 const COOLDOWN_SECONDS = 60;
 
 // App nào đang dùng server OTP
 const ACCOUNT = (process.env.EXPO_PUBLIC_ACCOUNT || 'mathmaster').toLowerCase();
 
 // API base (đặt trong .env cho production)
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE
-  || 'https://otp-server-production-6c26.up.railway.app';
+const API_BASE =
+  process.env.EXPO_PUBLIC_API_BASE || 'https://otp-server21-production.up.railway.app';
 
 const ENDPOINTS = {
   SEND_OTP: `${API_BASE}/send-otp`,
@@ -51,6 +52,17 @@ async function fetchWithTimeout(
   }
 }
 
+// Chuẩn hoá thông điệp để nhận biết “đã gửi OTP rồi”
+function isAlreadySentMessage(msg?: string) {
+  if (!msg) return false;
+  const m = msg.toLowerCase();
+  return (
+    m.includes('otp đã được gửi') ||
+    m.includes('already sent') ||
+    m.includes('otp already sent')
+  );
+}
+
 export default function ForgotPasswordScreen() {
   /* =====================
      2) STATE
@@ -69,7 +81,10 @@ export default function ForgotPasswordScreen() {
   const [cooldown, setCooldown] = useState(0);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const titleText = useMemo(() => '🔐 Nhập Gmail để nhận mã OTP (Math Master)', []);
+  const titleText = useMemo(
+    () => '🔐 Nhập Gmail để nhận mã OTP (Math Master)',
+    []
+  );
 
   // Nhận sẵn email từ param (nếu có)
   useEffect(() => {
@@ -89,8 +104,9 @@ export default function ForgotPasswordScreen() {
     };
   }, []);
 
-  const startCooldown = () => {
-    setCooldown(COOLDOWN_SECONDS);
+  const startCooldown = (seconds?: number) => {
+    const total = typeof seconds === 'number' && seconds > 0 ? seconds : COOLDOWN_SECONDS;
+    setCooldown(total);
     if (cooldownRef.current) clearInterval(cooldownRef.current);
     cooldownRef.current = setInterval(() => {
       setCooldown(prev => {
@@ -121,54 +137,85 @@ export default function ForgotPasswordScreen() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, account: ACCOUNT }),
+          body: JSON.stringify({ email: email.trim(), account: ACCOUNT }),
         },
         15000
       );
 
       const data: any = await res.json().catch(() => ({}));
 
+      // TH1: Thành công bình thường
       if (res.ok && data?.success) {
         setSentOtp(true);
-        startCooldown();
+        startCooldown(
+          // backend có thể trả về thời gian cooldown còn lại
+          typeof data?.cooldownRemaining === 'number' ? data.cooldownRemaining : undefined
+        );
+        setDevOtp(typeof data.otp === 'string' ? data.otp : null);
+        Alert.alert('Thành công', 'OTP đã được gửi đến Gmail của bạn.');
+        return;
+      }
 
-        // Nếu server bật flag dev và trả về otp, show để test (đừng dùng cho prod)
+      // TH2: Server báo đã gửi trước đó nhưng còn hiệu lực -> coi như thành công
+      if (
+        res.status === 409 ||
+        res.status === 208 ||
+        isAlreadySentMessage(data?.message)
+      ) {
+        setSentOtp(true);
+        startCooldown(
+          typeof data?.cooldownRemaining === 'number' ? data.cooldownRemaining : undefined
+        );
         setDevOtp(typeof data.otp === 'string' ? data.otp : null);
 
-        Alert.alert('Thành công', 'OTP đã được gửi đến Gmail của bạn.');
-      } else {
-        const msg =
-          data?.message ||
-          (res.status === 429
-            ? 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.'
-            : 'Không gửi được OTP, vui lòng thử lại.');
-        Alert.alert('Lỗi', msg);
+        Alert.alert(
+          'Thông báo',
+          'Bạn đã yêu cầu OTP trước đó và mã vẫn còn hiệu lực. Vui lòng kiểm tra hộp thư và nhập mã OTP.'
+        );
+        return;
       }
+
+      // TH3: Rate limit / spam
+      if (res.status === 429) {
+        Alert.alert(
+          'Quá nhanh',
+          'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.'
+        );
+        return;
+      }
+
+      // TH4: Lỗi khác
+      Alert.alert('Lỗi', data?.message || 'Không gửi được OTP, vui lòng thử lại.');
     } catch (err: any) {
       const aborted = err?.name === 'AbortError';
       console.error('Lỗi gửi OTP:', err);
-      Alert.alert('Lỗi', aborted ? 'Hết thời gian chờ, vui lòng thử lại.' : 'Không thể kết nối đến máy chủ.');
+      Alert.alert(
+        'Lỗi',
+        aborted ? 'Hết thời gian chờ, vui lòng thử lại.' : 'Không thể kết nối đến máy chủ.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
   /* =====================
-     4) XÁC THỰC OTP (gọi /verify-otp)
+     4) XÁC THỰC OTP
      ===================== */
   const verifyOtp = async () => {
     if (!sentOtp) return Alert.alert('Lỗi', 'Vui lòng gửi mã OTP trước.');
-    if (!otp || otp.length < OTP_LENGTH) return Alert.alert('Lỗi', `Vui lòng nhập đủ ${OTP_LENGTH} ký tự OTP.`);
+    if (!otp || otp.length < OTP_LENGTH)
+      return Alert.alert('Lỗi', `Vui lòng nhập đủ ${OTP_LENGTH} ký tự OTP.`);
 
     try {
       setLoading(true);
+      Keyboard.dismiss();
 
       const res = await fetchWithTimeout(
         ENDPOINTS.VERIFY_OTP,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, otp, account: ACCOUNT }),
+          body: JSON.stringify({ email: email.trim(), otp, account: ACCOUNT }),
         },
         15000
       );
@@ -176,7 +223,6 @@ export default function ForgotPasswordScreen() {
       const data: any = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        // qua màn đặt lại mật khẩu
         router.push({ pathname: '/reset-password', params: { email } });
       } else {
         Alert.alert('Sai mã', data?.message || 'OTP không đúng hoặc đã hết hạn.');
@@ -184,7 +230,10 @@ export default function ForgotPasswordScreen() {
     } catch (err: any) {
       const aborted = err?.name === 'AbortError';
       console.error('Lỗi verify OTP:', err);
-      Alert.alert('Lỗi', aborted ? 'Hết thời gian chờ, vui lòng thử lại.' : 'Không thể kết nối đến máy chủ.');
+      Alert.alert(
+        'Lỗi',
+        aborted ? 'Hết thời gian chờ, vui lòng thử lại.' : 'Không thể kết nối đến máy chủ.'
+      );
     } finally {
       setLoading(false);
     }
@@ -193,6 +242,9 @@ export default function ForgotPasswordScreen() {
   /* =====================
      5) UI
      ===================== */
+  const canSubmit = !loading;
+  const canResend = sentOtp && !loading && cooldown === 0;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -212,6 +264,10 @@ export default function ForgotPasswordScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           editable={!loading}
+          returnKeyType={sentOtp ? 'next' : 'send'}
+          onSubmitEditing={() => {
+            if (!sentOtp) sendOtp();
+          }}
           style={{
             backgroundColor: '#111827',
             color: '#F9FAFB',
@@ -242,6 +298,8 @@ export default function ForgotPasswordScreen() {
               autoCorrect={false}
               maxLength={OTP_LENGTH}
               editable={!loading}
+              returnKeyType="done"
+              onSubmitEditing={verifyOtp}
               style={{
                 backgroundColor: '#111827',
                 color: '#F9FAFB',
@@ -267,28 +325,26 @@ export default function ForgotPasswordScreen() {
 
         <TouchableOpacity
           onPress={sentOtp ? verifyOtp : sendOtp}
-          disabled={loading}
+          disabled={!canSubmit}
           style={{
             backgroundColor: '#7C3AED',
             paddingVertical: 14,
             borderRadius: 10,
-            opacity: loading ? 0.7 : 1,
+            opacity: !canSubmit ? 0.7 : 1,
             marginBottom: 10,
           }}
         >
           <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold', fontSize: 16 }}>
-            {loading
-              ? sentOtp ? 'ĐANG XÁC NHẬN...' : 'ĐANG GỬI...'
-              : sentOtp ? 'XÁC NHẬN OTP' : 'GỬI MÃ (MATH MASTER)'}
+            {loading ? (sentOtp ? 'ĐANG XÁC NHẬN...' : 'ĐANG GỬI...') : sentOtp ? 'XÁC NHẬN OTP' : 'GỬI MÃ (MATH MASTER)'}
           </Text>
         </TouchableOpacity>
 
         {sentOtp && (
-          <TouchableOpacity onPress={sendOtp} disabled={loading || cooldown > 0} style={{ marginBottom: 16 }}>
+          <TouchableOpacity onPress={sendOtp} disabled={!canResend} style={{ marginBottom: 16 }}>
             <Text
               style={{
                 textAlign: 'center',
-                color: loading || cooldown > 0 ? '#6B7280' : '#A78BFA',
+                color: canResend ? '#A78BFA' : '#6B7280',
                 fontWeight: '600',
               }}
             >
