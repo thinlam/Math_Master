@@ -82,7 +82,7 @@ export default function ForgotPasswordScreen() {
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const titleText = useMemo(
-    () => '🔐 Nhập Gmail để nhận mã OTP (Math Master)',
+    () => 'Nhập Gmail để nhận mã OTP',
     []
   );
 
