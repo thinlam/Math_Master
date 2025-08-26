@@ -36,31 +36,55 @@ function toDateSafe(v: any): Date | null {
   if (!v) return null;
   if (v instanceof Timestamp) return v.toDate();
   if (v instanceof Date) return v;
-  try { return new Date(v); } catch { return null; }
+  if (typeof v === 'object' && typeof v.seconds === 'number') {
+    return new Date(v.seconds * 1000);
+  }
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
 }
 function fmt(dt: Date | null) {
   if (!dt) return '—';
-  try { return dt.toLocaleString('vi-VN', { hour12: false }); }
-  catch { return dt.toISOString(); }
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    }).format(dt);
+  } catch {
+    return dt.toISOString().replace('T', ' ').slice(0, 19);
+  }
 }
 
 /** sau khi sửa/xoá sub, đồng bộ role người dùng */
 async function syncUserRole(uid: string) {
-  const qy = query(collection(db, 'subscriptions'), where('uid', '==', uid), where('status', '==', 'active'));
+  const qy = query(
+    collection(db, 'subscriptions'),
+    where('uid', '==', uid),
+    where('status', '==', 'active'),
+  );
   const snap = await getDocs(qy);
-  const userRef = doc(db, 'users', uid);
-  if (snap.empty) await updateDoc(userRef, { role: 'user' });
-  else await updateDoc(userRef, { role: 'premium' });
+  const role = snap.empty ? 'user' : 'premium';
+  await updateDoc(doc(db, 'users', uid), { role });
 }
 
 /** các gói hỗ trợ (tuỳ chỉnh cho dự án) */
 const PLAN_OPTIONS: { id: PlanId; label: string }[] = [
   { id: 'premium1m' as PlanId, label: '1 tháng' },
-  // { id: 'premium3m' as PlanId, label: '3 tháng' },
   { id: 'premium6m' as PlanId, label: '6 tháng' },
-  // { id: 'premium12m' as PlanId, label: '12 tháng' },
   { id: 'premium1y' as PlanId, label: '1 năm' },
 ];
+
+function planToMonths(p: PlanId) {
+  if (p === 'premium1m') return 1;
+  if (p === 'premium6m') return 6;
+  if (p === 'premium1y') return 12;
+  return 1;
+}
+function addMonths(d: Date, months: number) {
+  const dt = new Date(d);
+  dt.setMonth(dt.getMonth() + months);
+  return dt;
+}
 
 export default function EditSub() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -92,35 +116,59 @@ export default function EditSub() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  /* load */
-  const load = async () => {
-    try {
-      setLoading(true);
-      const data = await getSubscriptionById(id!);
-      if (!data) {
-        Alert.alert('Không tìm thấy', 'Gói đã bị xoá hoặc ID không hợp lệ.', [
+  /* load (guard unmount) */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!id) return;
+      try {
+        setLoading(true);
+        const data = await getSubscriptionById(id);
+        if (!alive) return;
+        if (!data) {
+          Alert.alert('Không tìm thấy', 'Gói đã bị xoá hoặc ID không hợp lệ.', [
+            { text: 'OK', onPress: () => router.back() },
+          ]);
+          return;
+        }
+        setItem(data);
+        setPlanId(data.planId as PlanId);
+        setStatus(data.status);
+        setNote(data.note || '');
+      } catch (e: any) {
+        if (!alive) return;
+        Alert.alert('Lỗi', e?.message || 'Không tải được dữ liệu', [
           { text: 'OK', onPress: () => router.back() },
         ]);
-        return;
+      } finally {
+        if (alive) setLoading(false);
       }
-      setItem(data);
-      setPlanId(data.planId as PlanId);
-      setStatus(data.status);
-      setNote(data.note || '');
-    } catch (e: any) {
-      Alert.alert('Lỗi', e?.message || 'Không tải được dữ liệu', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    } finally { setLoading(false); }
-  };
-  useEffect(() => { if (id) load(); }, [id]);
+    })();
+    return () => { alive = false; };
+  }, [id]);
 
   const onSave = async () => {
     if (!item) return;
     try {
       setSaving(true);
-      await updateSubscription(item.id!, { planId, status, note });
+      const payload: any = { planId, status, note };
+
+      // Chuyển từ non-active sang active -> tạo kỳ hạn mới từ hiện tại
+      if (item.status !== 'active' && status === 'active') {
+        const start = new Date();
+        payload.startedAt = start;
+        payload.expiresAt = addMonths(start, planToMonths(planId));
+      }
+      // Đang active & đổi plan -> reset hạn theo plan mới tính từ startedAt cũ
+      if (item.status === 'active' && status === 'active' && planId !== item.planId) {
+        const start = toDateSafe(item.startedAt) ?? new Date();
+        payload.startedAt = start;
+        payload.expiresAt = addMonths(start, planToMonths(planId));
+      }
+
+      await updateSubscription(item.id!, payload);
       await syncUserRole(item.uid);
+
       Alert.alert('✅ Đã lưu', 'Cập nhật gói thành công.', [
         { text: 'OK', onPress: () => router.back() },
       ]);
@@ -129,7 +177,7 @@ export default function EditSub() {
     } finally { setSaving(false); }
   };
 
-  /** ❗ Xoá đa nền tảng: confirm trên web, Alert 2 nút trên native */
+  /** Xoá */
   const onDelete = () => {
     if (!item || saving || deleting) return;
 
@@ -183,7 +231,11 @@ export default function EditSub() {
       <SafeAreaView style={{ flex: 1 }}>
         <StatusBar translucent barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor="transparent" />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+          <ScrollView
+            contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
             {/* Header */}
             <View style={{ marginBottom: 12 }}>
               <Text style={{ color: C.text, fontSize: 20, fontWeight: '800' }}>
@@ -271,10 +323,18 @@ export default function EditSub() {
 
               {/* Note */}
               <Text style={[S.label, { color: C.sub, marginTop: 12 }]}>Ghi chú</Text>
-              <View style={[
-                S.inputWrap,
-                { minHeight: 90, alignItems: 'flex-start', borderColor: C.border, backgroundColor: isDark ? '#0F1733' : '#fff' },
-              ]}>
+              <View
+                style={[
+                  S.inputWrap,
+                  {
+                    height: undefined,
+                    minHeight: 100,
+                    alignItems: 'flex-start',
+                    borderColor: C.border,
+                    backgroundColor: isDark ? '#0F1733' : '#fff',
+                  },
+                ]}
+              >
                 <Ionicons name="document-text" size={18} color={C.sub} style={{ marginRight: 8, marginTop: 8 }} />
                 <TextInput
                   value={note}
@@ -282,21 +342,26 @@ export default function EditSub() {
                   placeholder="Nội bộ: nguồn cấp, lý do, mã hoá đơn…"
                   placeholderTextColor={C.sub}
                   multiline
-                  style={[S.input, { color: C.text, textAlignVertical: 'top', minHeight: 80 }]}
+                  blurOnSubmit={false}
+                  style={[S.input, { color: C.text, textAlignVertical: 'top', minHeight: 100 }]}
                 />
               </View>
 
               {/* Meta */}
-              <View style={{ flexDirection: 'row', marginTop: 12, gap: 16 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
                   <Ionicons name="time" size={16} color={C.sub} />
                   <Text style={{ color: C.sub, marginLeft: 6 }}>Bắt đầu:</Text>
-                  <Text style={{ color: C.text, marginLeft: 4, fontWeight: '600' }}>{fmt(startedAt)}</Text>
+                  <Text style={{ color: C.text, marginLeft: 4, fontWeight: '600', flexShrink: 1 }}>
+                    {fmt(startedAt)}
+                  </Text>
                 </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
                   <Ionicons name="alarm" size={16} color={C.sub} />
                   <Text style={{ color: C.sub, marginLeft: 6 }}>Hết hạn:</Text>
-                  <Text style={{ color: C.text, marginLeft: 4, fontWeight: '600' }}>{fmt(expiresAt)}</Text>
+                  <Text style={{ color: C.text, marginLeft: 4, fontWeight: '600', flexShrink: 1 }}>
+                    {fmt(expiresAt)}
+                  </Text>
                 </View>
               </View>
 
@@ -342,7 +407,7 @@ const S = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 44,
+    // không đặt height cố định để textarea không bị kẹt
   },
   input: { flex: 1, paddingVertical: 8, fontSize: 15 },
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

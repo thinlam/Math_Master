@@ -530,175 +530,159 @@ export default function AdminLibraryScreen() {
       />
 
       {/* Modal Add/Edit */}
-      <Modal visible={visible} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
-            style={{ width: '100%' }}
+<Modal visible={visible} animationType="slide" transparent>
+  <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
+    {/* Chỉ iOS mới tránh bàn phím bằng KAV */}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // Đẩy vừa phải theo chiều cao header/title của modal
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 16 : 0}
+      style={{ width: '100%' }}
+    >
+      <View
+        style={{
+          backgroundColor: '#fff',
+          borderTopLeftRadius: 16,
+          borderTopRightRadius: 16,
+          maxHeight: '92%',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+          <Text style={{ fontSize: 18, fontWeight: '800', flex: 1 }}>
+            {editingId ? 'Sửa tài liệu' : 'Thêm tài liệu'}
+          </Text>
+          <TouchableOpacity
+            onPress={() => { setVisible(false); resetForm(); }}
           >
-            <View
-              style={{
-                backgroundColor: '#fff',
-                borderTopLeftRadius: 16,
-                borderTopRightRadius: 16,
-                paddingBottom: 24,
-                maxHeight: '92%',
-              }}
-            >
-              <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={{ fontSize: 18, fontWeight: '800', flex: 1 }}>
-                  {editingId ? 'Sửa tài liệu' : 'Thêm tài liệu'}
-                </Text>
+            <Ionicons name="close" size={22} color="#111827" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Nội dung cuộn */}
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          // ❌ bỏ automaticallyAdjustKeyboardInsets để tránh cộng dồn với KAV
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 88 }}
+        >
+          {/* Level */}
+          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mức độ *</Text>
+          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+            <Chip active={fLevel === 'basic'} label="Cơ bản" onPress={() => setFLevel('basic')} />
+            <Chip active={fLevel === 'advanced'} label="Nâng cao (Premium)" onPress={() => setFLevel('advanced')} />
+          </View>
+
+          {/* Title */}
+          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tiêu đề *</Text>
+          <TextInput
+            value={fTitle}
+            onChangeText={setFTitle}
+            placeholder="VD: Đề ôn giữa kỳ Toán 3"
+            style={{
+              borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
+              paddingHorizontal: 12, height: 44, marginBottom: 12,
+            }}
+          />
+
+          {/* Subtitle */}
+          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mô tả ngắn</Text>
+          <TextInput
+            value={fSubtitle}
+            onChangeText={setFSubtitle}
+            placeholder="Theo SGK Kết nối tri thức…"
+            style={{
+              borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
+              paddingHorizontal: 12, height: 44, marginBottom: 12,
+            }}
+          />
+
+          {/* Grade */}
+          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Lớp *</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ marginBottom: 12 }}>
+            {GRADES.map((g) => {
+              const active = fGrade === g;
+              return (
                 <TouchableOpacity
-                  onPress={() => {
-                    setVisible(false);
-                    resetForm();
+                  key={g}
+                  onPress={() => setFGrade(g)}
+                  style={{
+                    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, marginRight: 8,
+                    backgroundColor: active ? '#4F46E5' : '#EEF2FF',
                   }}
                 >
-                  <Ionicons name="close" size={22} color="#111827" />
+                  <Text style={{ color: active ? '#fff' : '#4F46E5', fontWeight: '700' }}>Lớp {g}</Text>
                 </TouchableOpacity>
-              </View>
+              );
+            })}
+          </ScrollView>
 
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                automaticallyAdjustKeyboardInsets
-                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 120 }}
-              >
-                {/* Level */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mức độ *</Text>
-                <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-                  <Chip active={fLevel === 'basic'} label="Cơ bản" onPress={() => setFLevel('basic')} />
-                  <Chip active={fLevel === 'advanced'} label="Nâng cao (Premium)" onPress={() => setFLevel('advanced')} />
-                </View>
+          {/* Tags */}
+          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tags (phân cách dấu phẩy)</Text>
+          <TextInput
+            value={fTags}
+            onChangeText={setFTags}
+            placeholder="ôn tập, giữa kỳ, toán"
+            style={{
+              borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
+              paddingHorizontal: 12, height: 44, marginBottom: 12,
+            }}
+          />
 
-                {/* Title */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tiêu đề *</Text>
-                <TextInput
-                  value={fTitle}
-                  onChangeText={setFTitle}
-                  placeholder="VD: Đề ôn giữa kỳ Toán 3"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    height: 44,
-                    marginBottom: 12,
-                  }}
-                />
+          {/* Content */}
+          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Nội dung *</Text>
+          <TextInput
+            value={fContent}
+            onChangeText={setFContent}
+            placeholder="Dán nội dung từ Word hoặc tự gõ tại đây…"
+            multiline
+            textAlignVertical="top"
+            style={{
+              borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
+              paddingHorizontal: 12, paddingVertical: 12,
+              minHeight: 220, marginBottom: 12,
+            }}
+          />
+        </ScrollView>
 
-                {/* Subtitle */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Mô tả ngắn</Text>
-                <TextInput
-                  value={fSubtitle}
-                  onChangeText={setFSubtitle}
-                  placeholder="Theo SGK Kết nối tri thức…"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    height: 44,
-                    marginBottom: 12,
-                  }}
-                />
+        {/* Footer cố định – luôn bám đáy, nằm trên bàn phím */}
+        <View
+          style={{
+            position: 'absolute',
+            left: 0, right: 0,
+            bottom: 0,
+            padding: 12,
+            paddingBottom: insets.bottom + 12,
+            borderTopWidth: 1, borderTopColor: '#F3F4F6',
+            backgroundColor: '#fff',
+            flexDirection: 'row',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => { setVisible(false); resetForm(); }}
+            style={{
+              paddingHorizontal: 14, paddingVertical: 10,
+              borderRadius: 10, backgroundColor: '#E5E7EB', marginRight: 10,
+            }}
+          >
+            <Text style={{ fontWeight: '700' }}>Huỷ</Text>
+          </TouchableOpacity>
 
-                {/* Grade */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Lớp *</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ marginBottom: 12 }}>
-                  {GRADES.map((g) => {
-                    const active = fGrade === g;
-                    return (
-                      <TouchableOpacity
-                        key={g}
-                        onPress={() => setFGrade(g)}
-                        style={{
-                          paddingHorizontal: 12,
-                          paddingVertical: 8,
-                          borderRadius: 999,
-                          marginRight: 8,
-                          backgroundColor: active ? '#4F46E5' : '#EEF2FF',
-                        }}
-                      >
-                        <Text style={{ color: active ? '#fff' : '#4F46E5', fontWeight: '700' }}>Lớp {g}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Tags */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Tags (phân cách dấu phẩy)</Text>
-                <TextInput
-                  value={fTags}
-                  onChangeText={setFTags}
-                  placeholder="ôn tập, giữa kỳ, toán"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    height: 44,
-                    marginBottom: 12,
-                  }}
-                />
-
-                {/* CONTENT (TEXT) */}
-                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Nội dung *</Text>
-                <TextInput
-                  value={fContent}
-                  onChangeText={setFContent}
-                  placeholder="Dán nội dung từ Word hoặc tự gõ tại đây…"
-                  multiline
-                  textAlignVertical="top"
-                  style={{
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    paddingVertical: 12,
-                    minHeight: 220,
-                    marginBottom: 12,
-                  }}
-                />
-
-                {/* Actions */}
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setVisible(false);
-                      resetForm();
-                    }}
-                    style={{
-                      paddingHorizontal: 14,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                      backgroundColor: '#E5E7EB',
-                      marginRight: 10,
-                    }}
-                  >
-                    <Text style={{ fontWeight: '700' }}>Huỷ</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={handleSave}
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                      backgroundColor: '#4F46E5',
-                    }}
-                  >
-                    <Text style={{ fontWeight: '700', color: '#fff' }}>
-                      {editingId ? 'Lưu thay đổi' : 'Thêm mới'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
+          <TouchableOpacity
+            onPress={handleSave}
+            style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: '#4F46E5' }}
+          >
+            <Text style={{ fontWeight: '700', color: '#fff' }}>
+              {editingId ? 'Lưu thay đổi' : 'Thêm mới'}
+            </Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
+      </View>
+    </KeyboardAvoidingView>
+  </View>
+</Modal>
+
     </View>
   );
 }
