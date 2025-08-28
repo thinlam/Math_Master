@@ -339,6 +339,7 @@ export default function AdminHome() {
                 <QuickAction icon="library-outline" label="Quản lý Library" onPress={() => go(router, 'library')} />
                 {/* NEW: Quản lý gói */}
                 <QuickAction icon="star-outline" label="Quản lý gói" onPress={() => go(router, 'subscriptions')} />
+                <QuickAction icon = "time" label= "Quick " onPress={() => router.push('/(admin)/quick')} />
               </View>
             </View>
 

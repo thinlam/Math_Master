@@ -91,6 +91,14 @@ export default function TabLayout() {
         name="premium/Status"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="Practice/Quick"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="Practice/[id]"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

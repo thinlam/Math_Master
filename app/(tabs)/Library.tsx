@@ -24,9 +24,9 @@ import {
   collection,
   doc,
   DocumentData,
-  getDoc,
   getDocs,
   limit,
+  onSnapshot,
   orderBy,
   query,
   QueryDocumentSnapshot,
@@ -80,6 +80,27 @@ function useDebounced<T>(value: T, delay = 350) {
   return v;
 }
 
+/* ---------- Helper: Tính premium ---------- */
+function computeIsPremium(data: any): boolean {
+  if (!data) return false;
+  if (data.role === 'premium') return true;
+  if (data.premium === true) return true;
+
+  // Nếu có hạn dùng premiumUntil (Firestore Timestamp hoặc Date)
+  try {
+    const until =
+      data.premiumUntil?.toDate?.() ??
+      (data.premiumUntil instanceof Date ? data.premiumUntil : null);
+    if (until && until.getTime() > Date.now()) return true;
+  } catch {}
+
+  // Nếu đồng bộ Stripe vào user doc
+  const s = String(data?.stripe?.subscriptionStatus || '').toLowerCase();
+  if (['active', 'trialing', 'past_due'].includes(s)) return true;
+
+  return false;
+}
+
 /* ---------- UI ---------- */
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
@@ -98,6 +119,10 @@ export default function LibraryScreen() {
   const [isPremium, setIsPremium] = useState<boolean>(false);
   const [showPaywall, setShowPaywall] = useState(false);
 
+  // giữ unsub cho user doc và subscriptions để cleanup
+  const userUnsubRef = useRef<null | (() => void)>(null);
+  const subsUnsubRef = useRef<null | (() => void)>(null);
+
   // filters
   const [queryText, setQueryText] = useState('');
   const [grade, setGrade] = useState<number | null>(null);
@@ -105,25 +130,66 @@ export default function LibraryScreen() {
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
   const debouncedQ = useDebounced(queryText.trim().toLowerCase(), 400);
 
-  /* ---------- Auth + fetch user premium ---------- */
+  /* ---------- Auth + realtime user premium ---------- */
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const unsubAuth = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
+
+      // cleanup listeners cũ
+      userUnsubRef.current?.();
+      userUnsubRef.current = null;
+      subsUnsubRef.current?.();
+      subsUnsubRef.current = null;
+
       if (u?.uid) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', u.uid));
-          const data = userDoc.exists() ? (userDoc.data() as any) : {};
-          const premiumFlag = !!data?.premium || data?.role === 'premium';
-          setIsPremium(premiumFlag);
-        } catch (e) {
-          console.warn('get user premium error', e);
-          setIsPremium(false);
+        // 1) Nghe realtime users/{uid}
+        const userRef = doc(db, 'users', u.uid);
+        userUnsubRef.current = onSnapshot(
+          userRef,
+          (snap) => {
+            const data = snap.exists() ? snap.data() : {};
+            setIsPremium(computeIsPremium(data));
+          },
+          (err) => {
+            console.warn('onSnapshot user error', err);
+            setIsPremium(false);
+          }
+        );
+
+        // 2) (Tuỳ chọn) nghe subscriptions nếu bạn lưu ở đây
+        // Hãy sửa tên collection và field cho đúng schema của bạn.
+        const LISTEN_SUBSCRIPTIONS = true; // bật/tắt theo nhu cầu
+        if (LISTEN_SUBSCRIPTIONS) {
+          const qSubs = query(
+            collection(db, 'subscriptions'),
+            where('userId', '==', u.uid)
+          );
+          subsUnsubRef.current = onSnapshot(
+            qSubs,
+            (snap) => {
+              let fromSubs = false;
+              snap.forEach((d) => {
+                const st = String((d.data() as any)?.status || '').toLowerCase();
+                if (['active', 'trialing', 'past_due'].includes(st)) fromSubs = true;
+              });
+              // Hợp nhất: nếu subs active thì chắc chắn premium
+              setIsPremium((prev) => prev || fromSubs);
+            },
+            (err) => console.warn('onSnapshot subscriptions error', err)
+          );
         }
       } else {
         setIsPremium(false);
       }
     });
-    return () => unsub();
+
+    return () => {
+      unsubAuth();
+      userUnsubRef.current?.();
+      subsUnsubRef.current?.();
+      userUnsubRef.current = null;
+      subsUnsubRef.current = null;
+    };
   }, []);
 
   /* ---------- Build Firestore query ---------- */
@@ -133,8 +199,6 @@ export default function LibraryScreen() {
 
     if (grade) parts.push(where('grade', '==', grade));
     if (typeFilter) parts.push(where('type', '==', typeFilter));
-    // Nếu có field `keywords` (lowercase title + tags) có thể bật:
-    // if (debouncedQ) parts.push(where('keywords', 'array-contains', debouncedQ));
 
     parts.push(
       orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc')
@@ -180,14 +244,14 @@ export default function LibraryScreen() {
     if (!lastDocRef.current) return;
 
     try {
-      const col = collection(db, 'library');
+      const colRef = collection(db, 'library');
       const parts: any[] = [];
       if (grade) parts.push(where('grade', '==', grade));
       if (typeFilter) parts.push(where('type', '==', typeFilter));
       parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
       parts.push(startAfter(lastDocRef.current));
       parts.push(limit(PAGE_SIZE));
-      const qRef = query(col, ...parts);
+      const qRef = query(colRef, ...parts);
 
       const snap = await getDocs(qRef);
       const data: LibraryItem[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
@@ -406,8 +470,12 @@ export default function LibraryScreen() {
   /* ---------- Paywall Modal ---------- */
   const goUpgrade = useCallback(() => {
     setShowPaywall(false);
-    // Điều hướng tới tab Store (nơi thanh toán)
+    // Điều hướng tới tab Store (nơi thanh toán). Sau khi thanh toán xong,
+    // webhook cập nhật Firestore → onSnapshot ở trên sẽ tự đổi trạng thái.
     router.push('/(tabs)/Store');
+
+    // Tuỳ chọn: Optimistic UI (bật tạm thời rồi để snapshot “xác nhận”)
+    // setIsPremium(true);
   }, [router]);
 
   return (

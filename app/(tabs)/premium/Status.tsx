@@ -7,7 +7,16 @@ import {
 } from '@/services/subscription';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { collection, getDocs, query, Timestamp, where } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  Timestamp,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -44,6 +53,23 @@ function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
 }
 
+/** Sau khi huỷ, nếu user KHÔNG còn gói active/pending nào khác thì hạ quyền ngay. */
+async function applyRoleAfterCancel(uid: string) {
+  const stillActive = await getActiveSubscriptionByUid(uid);
+  if (stillActive && (stillActive.status === 'active' || stillActive.status === 'pending')) return;
+
+  // Đồng bộ nhiều field phổ biến để tương thích schema
+  await updateDoc(doc(db, 'users', uid), {
+    role: 'free',
+    premium: false,
+    'roles.premium': false,
+    updatedAt: serverTimestamp(),
+  });
+
+  // Nếu bạn dùng custom claims để bảo vệ API, ở client nhớ refresh token:
+  // await auth.currentUser?.getIdToken(true);
+}
+
 /* ---------- Component ---------- */
 export default function PremiumStatus() {
   const insets = useSafeAreaInsets();
@@ -68,7 +94,7 @@ export default function PremiumStatus() {
     setLoading(true);
     try {
       const a = await getActiveSubscriptionByUid(uid);
-      setActive(a);
+      setActive(a || null);
 
       const qy = query(collection(db, 'subscriptions'), where('uid', '==', uid));
       const snap = await getDocs(qy);
@@ -120,15 +146,20 @@ export default function PremiumStatus() {
   }, [startedAt, expiresAt]);
 
   const cancelRenew = useCallback(async () => {
-    if (!active) return;
+    if (!active || !uid) return;
     try {
+      // 1) Đánh dấu subscription hiện tại là cancelled
       await updateSubscription(active.id!, { status: 'cancelled' });
-      Alert.alert('Đã hủy gia hạn', 'Gói sẽ ngừng vào ngày hết hạn hiện tại.');
-      load();
+
+      // 2) Hạ role user ngay lập tức (nếu không còn gói active nào khác)
+      await applyRoleAfterCancel(uid);
+
+      Alert.alert('Đã hủy gia hạn', 'Gói đã được huỷ và quyền Premium của bạn đã được cập nhật.');
+      await load();
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message || 'Không hủy được');
     }
-  }, [active, load]);
+  }, [active, uid, load]);
 
   if (loading) {
     return (
@@ -150,7 +181,10 @@ export default function PremiumStatus() {
           <Ionicons name="person-circle-outline" size={28} color="#fff" />
           <Text style={styles.bannerTitle}>Bạn chưa đăng nhập</Text>
           <Text style={styles.bannerSub}>Đăng nhập để xem và quản lý gói Premium.</Text>
-          <TouchableOpacity style={[styles.btn, styles.btnBrand, { marginTop: 12 }]} onPress={() => router.push('/(auth)/login')}>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnBrand, { marginTop: 12 }]}
+            onPress={() => router.push('/(auth)/login')}
+          >
             <Text style={styles.btnText}>Đăng nhập</Text>
           </TouchableOpacity>
         </View>
@@ -165,7 +199,9 @@ export default function PremiumStatus() {
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 24 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brand} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brand} />
+        }
       >
         {/* Header */}
         <Text style={styles.screenTitle}>Premium</Text>
@@ -178,10 +214,20 @@ export default function PremiumStatus() {
                 <Ionicons name="star" size={14} color="#111827" />
                 <Text style={styles.badgePremiumText}>PREMIUM</Text>
               </View>
-              <View style={[styles.statusPill, getStatusPillStyle(palette, active.status)]}>
-                <View style={styles.pillDot} />
-                <Text style={styles.statusPillText}>{active.status || 'active'}</Text>
-              </View>
+              {(() => {
+                const pill = getStatusPillStyle(palette, active.status);
+                return (
+                  <View
+                    style={[
+                      styles.statusPill,
+                      { backgroundColor: pill.backgroundColor, borderColor: pill.borderColor },
+                    ]}
+                  >
+                    <View style={[styles.pillDot, { backgroundColor: pill.dot }]} />
+                    <Text style={styles.statusPillText}>{active.status || 'active'}</Text>
+                  </View>
+                );
+              })()}
             </View>
 
             <Text style={styles.bannerTitle}>{active.planId || 'Gói hiện tại'}</Text>
@@ -192,15 +238,25 @@ export default function PremiumStatus() {
             {/* Progress */}
             <View style={styles.progressWrap}>
               <View style={styles.progressTrack}>
-                <View style={[styles.progressBar, { width: `${progress * 100}%`, backgroundColor: palette.brand }]} />
+                <View
+                  style={[
+                    styles.progressBar,
+                    { width: `${progress * 100}%`, backgroundColor: palette.brand },
+                  ]}
+                />
               </View>
               <Text style={styles.progressText}>
-                {startedAt ? startedAt.toLocaleDateString() : '—'} → {expiresAt ? expiresAt.toLocaleDateString() : '—'} {totalDays ? `(${totalDays} ngày)` : ''}
+                {startedAt ? startedAt.toLocaleDateString() : '—'} →{' '}
+                {expiresAt ? expiresAt.toLocaleDateString() : '—'}{' '}
+                {totalDays ? `(${totalDays} ngày)` : ''}
               </Text>
             </View>
 
             <View style={styles.bannerActions}>
-              <TouchableOpacity style={[styles.btn, styles.btnBrand]} onPress={() => router.push('/(tabs)/Store')}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnBrand]}
+                onPress={() => router.push('/(tabs)/Store')}
+              >
                 <Ionicons name="swap-vertical" size={16} color="#fff" style={{ marginRight: 6 }} />
                 <Text style={styles.btnText}>Gia hạn / Nâng cấp</Text>
               </TouchableOpacity>
@@ -219,7 +275,10 @@ export default function PremiumStatus() {
             <Ionicons name="star-outline" size={28} color="#fff" />
             <Text style={styles.bannerTitle}>Nâng cấp Premium</Text>
             <Text style={styles.bannerSub}>Mở khóa toàn bộ nội dung và tính năng nâng cao.</Text>
-            <TouchableOpacity style={[styles.btn, styles.btnBrand, { marginTop: 12 }]} onPress={() => router.push('/(tabs)/Store')}>
+            <TouchableOpacity
+              style={[styles.btn, styles.btnBrand, { marginTop: 12 }]}
+              onPress={() => router.push('/(tabs)/Store')}
+            >
               <Text style={styles.btnText}>Mua Premium</Text>
             </TouchableOpacity>
           </View>
@@ -245,6 +304,7 @@ export default function PremiumStatus() {
             history.map((h) => {
               const st = toDateSafe(h.startedAt);
               const ex = toDateSafe(h.expiresAt);
+              const pill = getStatusPillStyle(palette, h.status);
               return (
                 <View key={h.id} style={styles.historyItem}>
                   <View style={{ flex: 1 }}>
@@ -253,8 +313,13 @@ export default function PremiumStatus() {
                       {st ? st.toLocaleDateString() : '—'} → {ex ? ex.toLocaleDateString() : '—'}
                     </Text>
                   </View>
-                  <View style={[styles.statusPill, getStatusPillStyle(palette, h.status)]}>
-                    <View style={styles.pillDot} />
+                  <View
+                    style={[
+                      styles.statusPill,
+                      { backgroundColor: pill.backgroundColor, borderColor: pill.borderColor },
+                    ]}
+                  >
+                    <View style={[styles.pillDot, { backgroundColor: pill.dot }]} />
                     <Text style={styles.statusPillText}>{h.status || 'unknown'}</Text>
                   </View>
                 </View>
@@ -382,7 +447,7 @@ function makeStyles(p: Palette) {
       width: 6,
       height: 6,
       borderRadius: 999,
-      backgroundColor: '#16A34A', // sẽ bị override bằng inline style (dot)
+      backgroundColor: '#16A34A', // sẽ bị override bằng inline style
     },
     statusPillText: { color: p.text, fontWeight: '700', textTransform: 'capitalize' },
 

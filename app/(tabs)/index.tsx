@@ -21,7 +21,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 /* Firebase */
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import {
+  /* thêm cho thông báo: */
+  collection,
+  doc, getDoc,
+  limit,
+  onSnapshot, orderBy, query,
+  Timestamp,
+  updateDoc,
+} from 'firebase/firestore';
 
 /* i18n (rút gọn) */
 const I18N = {
@@ -80,6 +88,9 @@ function classToGradeNumber(levelStr: string): number | null {
 }
 function formatCoins(n: number) { return new Intl.NumberFormat('vi-VN').format(n); }
 
+/* ====== THÔNG BÁO ====== */
+type Ann = { id: string; title: string; body?: string | null; createdAt?: Timestamp | null };
+
 export default function HomeScreen() {
   const router = useRouter();
   const { palette, colorScheme } = useTheme();
@@ -93,6 +104,13 @@ export default function HomeScreen() {
   const [classModalVisible, setClassModalVisible] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [savingClass, setSavingClass] = useState(false);
+
+  /* ===== Announcements state ===== */
+  const [annList, setAnnList] = useState<Ann[]>([]);
+  const [annModalVisible, setAnnModalVisible] = useState(false);
+  const [bannerAnn, setBannerAnn] = useState<Ann | null>(null);
+  const [lastSeenAnn, setLastSeenAnn] = useState<Date | null>(null);
+  const [initialAnnLoaded, setInitialAnnLoaded] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -166,7 +184,69 @@ export default function HomeScreen() {
     router.push('/Learnning/Learn');
   }, [router, user?.level, selectedClass]);
 
-  // const goTopUp = useCallback(() => { router.push('/(tabs)/Store'); }, [router]);
+  /* ====== SUBSCRIBE THÔNG BÁO ====== */
+
+  // doc users/{uid} để lấy lastSeenAnn
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const unsub = onSnapshot(doc(db, 'users', firebaseUser.uid), (d) => {
+      const v = d.get('lastSeenAnn');
+      setLastSeenAnn(v?.toDate?.() || null);
+    });
+    return unsub;
+  }, [firebaseUser]);
+
+  // danh sách thông báo (cho modal)
+  useEffect(() => {
+    const qAll = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(qAll, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Ann[];
+      setAnnList(items);
+    });
+    return unsub;
+  }, []);
+
+  // chỉ 1 bản ghi mới nhất để bật banner khi có thông báo mới
+  useEffect(() => {
+    const q1 = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(1));
+    const unsub = onSnapshot(q1, (snap) => {
+      const latest = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))[0] as Ann | undefined;
+
+      if (!latest) { setInitialAnnLoaded(true); return; }
+
+      // tránh nhảy banner lần đầu mở app
+      if (!initialAnnLoaded) {
+        setInitialAnnLoaded(true);
+        return;
+      }
+
+      const created = (latest.createdAt as any)?.toDate?.() || new Date();
+      if (!lastSeenAnn || created > lastSeenAnn) {
+        setBannerAnn(latest);
+        const t = setTimeout(() => setBannerAnn(null), 5000);
+        return () => clearTimeout(t);
+      }
+    });
+    return unsub;
+     
+  }, [initialAnnLoaded, lastSeenAnn]);
+
+  const unreadCount = useMemo(() => {
+    if (!lastSeenAnn) return annList.length;
+    return annList.filter((a) => {
+      const d = (a.createdAt as any)?.toDate?.() || new Date(0);
+      return d > lastSeenAnn!;
+    }).length;
+  }, [annList, lastSeenAnn]);
+
+  const openAnnModal = async () => {
+    setAnnModalVisible(true);
+    if (firebaseUser) {
+      try { await updateDoc(doc(db, 'users', firebaseUser.uid), { lastSeenAnn: new Date() }); } catch {}
+    }
+  };
+
+  /* ====== UI ====== */
 
   if (!firebaseUser || loading) {
     return (
@@ -191,7 +271,29 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
       >
         {/* Header */}
-        <View style={styles.headerCard}>
+        <View style={[styles.headerCard, { position: 'relative' }]}>
+          {/* Nút chuông thông báo */}
+          <TouchableOpacity
+            onPress={openAnnModal}
+            style={{ position: 'absolute', right: 10, top: 10, padding: 6 }}
+            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+          >
+            <Ionicons name="notifications-outline" size={22} color={palette.text} />
+            {unreadCount > 0 && (
+              <View
+                style={{
+                  position: 'absolute', right: 2, top: 2,
+                  minWidth: 16, height: 16, borderRadius: 8,
+                  backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+                }}
+              >
+                <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
           <View style={styles.row}>
             {user?.photoURL ? (
               <Image source={{ uri: user.photoURL }} style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }} resizeMode="cover" />
@@ -220,15 +322,6 @@ export default function HomeScreen() {
                   <Text style={styles.levelTxt}>{user?.level || t('noClass')}</Text>
                 </View>
 
-                {/* <View style={styles.coinPill}>
-                  <Ionicons name="cash-outline" size={16} color={palette.coinIcon} />
-                  <Text style={styles.coinTxt}>{formatCoins(user?.coins ?? 0)} {t('coins')}</Text>
-                  <TouchableOpacity style={styles.topupBtn} onPress={goTopUp}>
-                    <Ionicons name="add" size={14} color={palette.editBtnText} />
-                    <Text style={styles.topupTxt}>{t('topup')}</Text>
-                  </TouchableOpacity>
-                </View> */}
-
                 <TouchableOpacity style={styles.changeBtn} onPress={() => setClassModalVisible(true)}>
                   <Ionicons name="create-outline" size={16} color={palette.editBtnText} />
                   <Text style={styles.changeTxt}>{user?.level ? t('changeClass') : t('chooseClass')}</Text>
@@ -238,6 +331,37 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* Banner thông báo mới */}
+        {bannerAnn && (
+          <TouchableOpacity
+            onPress={openAnnModal}
+            activeOpacity={0.9}
+            style={{
+              backgroundColor: colorMix(palette.bg, '#3B82F6', 0.18),
+              borderColor: colorMix(palette.bg, '#60A5FA', 0.45),
+              borderWidth: 1,
+              borderRadius: 12,
+              padding: 12,
+              marginTop: 8,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Ionicons name="notifications" size={18} color="#60A5FA" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: palette.text, fontWeight: '800' }} numberOfLines={1}>
+                  {bannerAnn.title}
+                </Text>
+                {!!bannerAnn.body && (
+                  <Text style={{ color: palette.textMuted }} numberOfLines={2}>
+                    {bannerAnn.body}
+                  </Text>
+                )}
+              </View>
+              <Text style={{ color: palette.textMuted, fontSize: 12 }}>Xem</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
         {/* Quick Actions */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('quickActions')}</Text>
@@ -245,7 +369,6 @@ export default function HomeScreen() {
             <QuickButton palette={palette} icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
             <QuickButton palette={palette} icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
             <QuickButton palette={palette} icon="flash-outline" label={t('challenge')} onPress={() => router.push('/challenge')} />
-            {/* <QuickButton palette={palette} icon="wallet-outline" label={t('topup')} onPress={goTopUp} /> */}
           </View>
         </View>
 
@@ -287,6 +410,58 @@ export default function HomeScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal thông báo */}
+      <Modal
+        visible={annModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAnnModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '78%' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <Text style={styles.modalTitle}>Thông báo</Text>
+              <TouchableOpacity onPress={() => setAnnModalVisible(false)} hitSlop={8}>
+                <Ionicons name="close" size={20} color={palette.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {annList.length === 0 ? (
+                <Text style={{ color: palette.textMuted, textAlign: 'center', marginVertical: 20 }}>
+                  Chưa có thông báo.
+                </Text>
+              ) : (
+                annList.map((a) => {
+                  const d = (a.createdAt as any)?.toDate?.() || new Date();
+                  return (
+                    <View
+                      key={a.id}
+                      style={{
+                        backgroundColor: palette.card,
+                        borderColor: palette.cardBorder,
+                        borderWidth: 1,
+                        borderRadius: 12,
+                        padding: 12,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <Text style={{ color: palette.text, fontWeight: '800' }}>{a.title}</Text>
+                      {!!a.body && <Text style={{ color: palette.textMuted, marginTop: 6 }}>{a.body}</Text>}
+                      <Text style={{ color: palette.textMuted, fontSize: 12, marginTop: 6 }}>
+                        {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}
+                        {' • '}
+                        {String(d.getDate()).padStart(2, '0')}/{String(d.getMonth() + 1).padStart(2, '0')}/{d.getFullYear()}
+                      </Text>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
