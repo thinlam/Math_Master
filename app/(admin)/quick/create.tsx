@@ -21,6 +21,28 @@ import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 type Option = { id: string; text: string; correct?: boolean };
 type Question = { id: string; text: string; options: Option[] };
 
+type TopicKey = 'add_sub' | 'mul_div' | 'geometry' | 'algebra' | 'numberSense'|'Phân số'|'Tư Duy'| 'other';
+type DifficultyKey = 'easy' | 'medium' | 'hard';
+
+const TOPICS: { key: TopicKey; label: string }[] = [
+  { key: 'add_sub', label: 'Cộng trừ' },
+  { key: 'mul_div', label: 'Nhân chia' },
+  { key: 'geometry', label: 'Hình học' },
+  { key: 'algebra', label: 'Đại số' },
+  { key: 'numberSense', label: 'Số học' },
+  {key : 'Phân số', label: 'Phân số' },
+  {key : 'Tư Duy', label: 'Tư Duy' },
+  
+
+  
+];
+
+const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
+  { key: 'easy', label: 'Dễ' },
+  { key: 'medium', label: 'Vừa' },
+  { key: 'hard', label: 'Khó' },
+];
+
 const C = {
   bg: '#0b1220',
   card: 'rgba(255,255,255,0.06)',
@@ -42,6 +64,9 @@ export default function AdminQuickCreate() {
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState('');
   const [klass, setKlass] = useState<number>(1);
+  const [topic, setTopic] = useState<TopicKey | null>(null);
+  const [difficulty, setDifficulty] = useState<DifficultyKey | null>(null);
+
   const [questions, setQuestions] = useState<Question[]>([
     {
       id: uid('q'),
@@ -54,7 +79,10 @@ export default function AdminQuickCreate() {
     },
   ]);
 
-  const canSave = useMemo(() => title.trim().length > 0 && klass >= 1, [title, klass]);
+  const canSave = useMemo(
+    () => title.trim().length > 0 && klass >= 1 && !!topic && !!difficulty,
+    [title, klass, topic, difficulty]
+  );
 
   function addQuestion() {
     setQuestions(prev => [
@@ -93,7 +121,7 @@ export default function AdminQuickCreate() {
       prev.map(q => {
         if (q.id !== qid) return q;
         const next = q.options.filter(o => o.id !== oid);
-        if (!next.some(o => o.correct) && next.length > 0) next[0].correct = true; // giữ đúng 1 đáp án đúng
+        if (!next.some(o => o.correct) && next.length > 0) next[0].correct = true;
         return { ...q, options: next };
       }),
     );
@@ -103,10 +131,7 @@ export default function AdminQuickCreate() {
     setQuestions(prev =>
       prev.map(q => {
         if (q.id !== qid) return q;
-        return {
-          ...q,
-          options: q.options.map(o => ({ ...o, correct: o.id === oid })),
-        };
+        return { ...q, options: q.options.map(o => ({ ...o, correct: o.id === oid })) };
       }),
     );
   }
@@ -114,6 +139,8 @@ export default function AdminQuickCreate() {
   function validate(): string | null {
     if (!title.trim()) return 'Vui lòng nhập tiêu đề.';
     if (!klass || klass < 1) return 'Chọn lớp hợp lệ.';
+    if (!topic) return 'Vui lòng chọn chủ đề.';
+    if (!difficulty) return 'Vui lòng chọn độ khó.';
     if (questions.length === 0) return 'Cần ít nhất 1 câu hỏi.';
     for (const [i, q] of questions.entries()) {
       if (!q.text.trim()) return `Câu ${i + 1}: chưa có nội dung.`;
@@ -133,14 +160,24 @@ export default function AdminQuickCreate() {
       Alert.alert('Thiếu thông tin', err);
       return;
     }
-    if (saving) return; // chặn bấm nhiều lần
+    if (saving) return;
 
     try {
       setSaving(true);
+      const titleNorm = title.trim();
+      const titleSearch = titleNorm.toLowerCase();
+
       const payload = {
-        title: title.trim(),
-        titleSearch: title.trim().toLowerCase(),
+        title: titleNorm,
+        titleSearch,
         class: klass,
+        topic,           // <-- thêm
+        difficulty,      // <-- thêm
+        tags: [          // gợi ý: tiện cho aggregate query client
+          `class:${klass}`,
+          `topic:${topic}`,
+          `difficulty:${difficulty}`,
+        ],
         questions: questions.map(q => ({
           id: q.id,
           text: q.text.trim(),
@@ -155,8 +192,6 @@ export default function AdminQuickCreate() {
       };
 
       await addDoc(collection(db, 'quick_practice'), payload);
-
-      // Điều hướng ngay về danh sách Quick
       router.replace('/(admin)/quick');
     } catch (e: any) {
       console.error(e);
@@ -165,6 +200,26 @@ export default function AdminQuickCreate() {
       setSaving(false);
     }
   }
+
+  const Chip = ({
+    active,
+    children,
+    onPress,
+  }: { active: boolean; children: React.ReactNode; onPress: () => void }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      style={{
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+        backgroundColor: active ? 'rgba(33,208,122,0.25)' : C.card,
+        borderWidth: 1,
+        borderColor: active ? C.good : C.line,
+      }}
+    >
+      <Text style={{ color: C.text, fontWeight: active ? '800' : '600' }}>{children}</Text>
+    </TouchableOpacity>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -188,29 +243,14 @@ export default function AdminQuickCreate() {
         <Text style={{ color: C.text, fontSize: 18, fontWeight: '800', marginLeft: 8, flex: 1 }}>
           Tạo Quick
         </Text>
-        <TouchableOpacity
-          onPress={onSave}
-          disabled={!canSave || saving}
-          style={{ opacity: !canSave || saving ? 0.5 : 1 }}
-        >
-          <Text style={{ color: C.good, fontWeight: '800' }}>
-            {saving ? 'Đang lưu…' : 'Lưu'}
-          </Text>
+        <TouchableOpacity onPress={onSave} disabled={!canSave || saving} style={{ opacity: !canSave || saving ? 0.5 : 1 }}>
+          <Text style={{ color: C.good, fontWeight: '800' }}>{saving ? 'Đang lưu…' : 'Lưu'}</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 12 }}>
         {/* Title */}
-        <View
-          style={{
-            backgroundColor: C.card,
-            borderRadius: 14,
-            padding: 12,
-            borderWidth: 1,
-            borderColor: C.line,
-            marginBottom: 12,
-          }}
-        >
+        <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Tiêu đề</Text>
           <TextInput
             value={title}
@@ -222,65 +262,50 @@ export default function AdminQuickCreate() {
         </View>
 
         {/* Class */}
-        <View
-          style={{
-            backgroundColor: C.card,
-            borderRadius: 14,
-            padding: 12,
-            borderWidth: 1,
-            borderColor: C.line,
-            marginBottom: 12,
-          }}
-        >
+        <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Lớp</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(v => {
+            {[1,2,3,4,5,6,7,8,8,10,11,12].map(v => {
               const active = klass === v;
-              return (
-                <TouchableOpacity
-                  key={v}
-                  onPress={() => setKlass(v)}
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    borderRadius: 10,
-                    backgroundColor: active ? 'rgba(33,208,122,0.25)' : C.card,
-                    borderWidth: 1,
-                    borderColor: active ? C.good : C.line,
-                  }}
-                >
-                  <Text style={{ color: C.text, fontWeight: active ? '800' : '600' }}>
-                    Lớp {v}
-                  </Text>
-                </TouchableOpacity>
-              );
+              return <Chip key={v} active={active} onPress={() => setKlass(v)}>Lớp {v}</Chip>;
             })}
+          </View>
+        </View>
+
+        {/* Topic */}
+        <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
+          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Chủ đề</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {TOPICS.map(t => (
+              <Chip key={t.key} active={topic === t.key} onPress={() => setTopic(t.key)}>
+                {t.label}
+              </Chip>
+            ))}
+          </View>
+        </View>
+
+        {/* Difficulty */}
+        <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
+          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Độ khó</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {DIFFICULTIES.map(d => (
+              <Chip key={d.key} active={difficulty === d.key} onPress={() => setDifficulty(d.key)}>
+                {d.label}
+              </Chip>
+            ))}
           </View>
         </View>
 
         {/* Questions */}
         <Text style={{ color: C.text, fontWeight: '800', marginBottom: 8 }}>Câu hỏi</Text>
         {questions.map((q, idx) => (
-          <View
-            key={q.id}
-            style={{
-              backgroundColor: C.card,
-              borderRadius: 14,
-              padding: 12,
-              borderWidth: 1,
-              borderColor: C.line,
-              marginBottom: 12,
-            }}
-          >
+          <View key={q.id} style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ color: C.text, fontWeight: '800', fontSize: 16, flex: 1 }}>
-                Câu {idx + 1}
-              </Text>
+              <Text style={{ color: C.text, fontWeight: '800', fontSize: 16, flex: 1 }}>Câu {idx + 1}</Text>
               <TouchableOpacity onPress={() => removeQuestion(q.id)} hitSlop={8}>
                 <Ionicons name="trash-outline" size={18} color={C.bad} />
               </TouchableOpacity>
             </View>
-
             <TextInput
               value={q.text}
               onChangeText={t => updateQuestion(q.id, { text: t })}
@@ -288,19 +313,10 @@ export default function AdminQuickCreate() {
               placeholderTextColor={C.sub}
               style={{ color: C.text, fontSize: 15, marginBottom: 8 }}
             />
-
-            {/* Options */}
             {q.options.map((op, j) => (
-              <View
-                key={op.id}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
-              >
+              <View key={op.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <TouchableOpacity onPress={() => setCorrect(q.id, op.id)} style={{ padding: 6 }}>
-                  <Ionicons
-                    name={op.correct ? 'radio-button-on' : 'radio-button-off'}
-                    size={18}
-                    color={op.correct ? C.good : C.sub}
-                  />
+                  <Ionicons name={op.correct ? 'radio-button-on' : 'radio-button-off'} size={18} color={op.correct ? C.good : C.sub} />
                 </TouchableOpacity>
                 <TextInput
                   value={op.text}
@@ -310,34 +326,21 @@ export default function AdminQuickCreate() {
                   }}
                   placeholder={`Đáp án ${j + 1}`}
                   placeholderTextColor={C.sub}
-                  style={{
-                    color: C.text,
-                    flex: 1,
-                    borderBottomWidth: 1,
-                    borderColor: C.line,
-                    paddingVertical: 6,
-                  }}
+                  style={{ color: C.text, flex: 1, borderBottomWidth: 1, borderColor: C.line, paddingVertical: 6 }}
                 />
                 <TouchableOpacity onPress={() => removeOption(q.id, op.id)} hitSlop={8}>
                   <Ionicons name="close-circle" size={18} color={C.sub} />
                 </TouchableOpacity>
               </View>
             ))}
-
-            <TouchableOpacity
-              onPress={() => addOption(q.id)}
-              style={{ alignSelf: 'flex-start', marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}
-            >
+            <TouchableOpacity onPress={() => addOption(q.id)} style={{ alignSelf: 'flex-start', marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="add-circle-outline" color={C.text} size={18} />
               <Text style={{ color: C.text, fontWeight: '700' }}>Thêm đáp án</Text>
             </TouchableOpacity>
           </View>
         ))}
 
-        <TouchableOpacity
-          onPress={addQuestion}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-        >
+        <TouchableOpacity onPress={addQuestion} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Ionicons name="add" color={C.text} size={18} />
           <Text style={{ color: C.text, fontWeight: '800' }}>Thêm câu hỏi</Text>
         </TouchableOpacity>

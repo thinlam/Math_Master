@@ -73,7 +73,7 @@ export default function TabLayout() {
       <Tabs.Screen name="Library" options={{ title: 'Thư viện' }} />
       <Tabs.Screen name="Store" options={{ title: 'Cửa hàng' }} />
       <Tabs.Screen name="Profile" options={{ title: 'Hồ sơ' }} />
-
+      
       {/* Ẩn các màn chi tiết (không hiện ở tab bar) */}
       <Tabs.Screen
         name="Learnning/Lesson/[id]"
@@ -91,12 +91,25 @@ export default function TabLayout() {
         name="premium/Status"
         options={{ href: null }}
       />
+      
+      <Tabs.Screen
+        name="Practice/[id]"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="Practice/_FilteredQuickList"
+        options={{ href: null }}
+      />
       <Tabs.Screen
         name="Practice/Quick"
         options={{ href: null }}
       />
       <Tabs.Screen
-        name="Practice/[id]"
+        name="Practice/Quick/Set/[id]"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="Practice/Quick/Set/[id]/Question/[qid]"
         options={{ href: null }}
       />
     </Tabs>

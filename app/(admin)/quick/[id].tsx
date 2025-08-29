@@ -4,15 +4,15 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -20,8 +20,26 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '@/scripts/firebase';
 import { deleteDoc, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
+/* ---------- Types ---------- */
 type Option = { id: string; text: string; correct?: boolean };
 type Question = { id: string; text: string; options: Option[] };
+type TopicKey = 'add_sub' | 'mul_div' | 'geometry' | 'algebra' | 'numberSense';
+type DifficultyKey = 'easy' | 'medium' | 'hard';
+
+/* ---------- Constants ---------- */
+const TOPICS: { key: TopicKey; label: string }[] = [
+  { key: 'add_sub', label: 'Cộng trừ' },
+  { key: 'mul_div', label: 'Nhân chia' },
+  { key: 'geometry', label: 'Hình học' },
+  { key: 'algebra', label: 'Đại số' },
+  { key: 'numberSense', label: 'Số học' },
+];
+
+const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
+  { key: 'easy', label: 'Dễ' },
+  { key: 'medium', label: 'Vừa' },
+  { key: 'hard', label: 'Khó' },
+];
 
 const C = {
   bg: '#0b1220',
@@ -44,8 +62,11 @@ export default function AdminQuickDetail() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
   const [title, setTitle] = useState('');
   const [klass, setKlass] = useState<number>(1);
+  const [topic, setTopic] = useState<TopicKey | null>(null);
+  const [difficulty, setDifficulty] = useState<DifficultyKey | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
 
   /* ---------- Load ---------- */
@@ -61,12 +82,16 @@ export default function AdminQuickDetail() {
         }
         const data: any = snap.data();
         if (!mounted) return;
+
         setTitle(String(data.title || ''));
         setKlass(Number(data.class || 1));
-        const qs: Question[] = (data.questions || []).map((q: any, i: number) => ({
+        setTopic((data.topic as TopicKey) ?? null);
+        setDifficulty((data.difficulty as DifficultyKey) ?? null);
+
+        const qs: Question[] = (data.questions || []).map((q: any) => ({
           id: q?.id || uid('q'),
           text: String(q?.text || ''),
-          options: (q?.options || []).map((o: any, j: number) => ({
+          options: (q?.options || []).map((o: any) => ({
             id: o?.id || uid('o'),
             text: String(o?.text || ''),
             correct: Boolean(o?.correct),
@@ -84,8 +109,12 @@ export default function AdminQuickDetail() {
     return () => { mounted = false; };
   }, [id]);
 
-  const canSave = useMemo(() => title.trim().length > 0 && klass >= 1, [title, klass]);
+  const canSave = useMemo(
+    () => title.trim().length > 0 && klass >= 1 && !!topic && !!difficulty,
+    [title, klass, topic, difficulty]
+  );
 
+  /* ---------- Mutations (questions/options) ---------- */
   function addQuestion() {
     setQuestions(prev => [...prev, {
       id: uid('q'),
@@ -129,9 +158,12 @@ export default function AdminQuickDetail() {
     }));
   }
 
+  /* ---------- Validate & Save ---------- */
   function validate(): string | null {
     if (!title.trim()) return 'Vui lòng nhập tiêu đề.';
     if (!klass || klass < 1) return 'Chọn lớp hợp lệ.';
+    if (!topic) return 'Vui lòng chọn chủ đề.';
+    if (!difficulty) return 'Vui lòng chọn độ khó.';
     if (questions.length === 0) return 'Cần ít nhất 1 câu hỏi.';
     for (const [i, q] of questions.entries()) {
       if (!q.text.trim()) return `Câu ${i + 1}: chưa có nội dung.`;
@@ -157,6 +189,9 @@ export default function AdminQuickDetail() {
         title: title.trim(),
         titleSearch: title.trim().toLowerCase(),
         class: klass,
+        topic,
+        difficulty,
+        tags: [`class:${klass}`, `topic:${topic}`, `difficulty:${difficulty}`],
         questions: questions.map(q => ({
           id: q.id,
           text: q.text.trim(),
@@ -177,7 +212,22 @@ export default function AdminQuickDetail() {
     }
   }
 
+  /* ---------- Delete (web-safe) ---------- */
   async function onDelete() {
+    if (Platform.OS === 'web') {
+      const ok = window.confirm('Bạn chắc chắn muốn xoá? Hành động không thể hoàn tác.');
+      if (!ok) return;
+      try {
+        await deleteDoc(doc(db, 'quick_practice', id));
+        alert('Đã xoá.');
+        router.replace('/(admin)/quick');
+      } catch (e: any) {
+        console.error(e);
+        alert(`Không thể xoá: ${e?.code || ''} ${e?.message || ''}`.trim());
+      }
+      return;
+    }
+
     Alert.alert('Xoá Quick', 'Bạn chắc chắn muốn xoá? Hành động không thể hoàn tác.', [
       { text: 'Huỷ' },
       {
@@ -187,7 +237,7 @@ export default function AdminQuickDetail() {
           try {
             await deleteDoc(doc(db, 'quick_practice', id));
             Alert.alert('Đã xoá', 'Quick đã bị xoá.');
-            router.replace('/admin/quick');
+            router.replace('/(admin)/quick');
           } catch (e: any) {
             console.error(e);
             Alert.alert('Lỗi', e?.message || 'Không thể xoá.');
@@ -197,6 +247,7 @@ export default function AdminQuickDetail() {
     ]);
   }
 
+  /* ---------- UI ---------- */
   if (loading) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}>
@@ -204,6 +255,26 @@ export default function AdminQuickDetail() {
       </View>
     );
   }
+
+  const Chip = ({
+    active,
+    children,
+    onPress,
+  }: { active: boolean; children: React.ReactNode; onPress: () => void }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      style={{
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+        backgroundColor: active ? 'rgba(33,208,122,0.25)' : C.card,
+        borderWidth: 1,
+        borderColor: active ? C.good : C.line,
+      }}
+    >
+      <Text style={{ color: C.text, fontWeight: active ? '800' : '600' }}>{children}</Text>
+    </TouchableOpacity>
+  );
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
@@ -242,22 +313,34 @@ export default function AdminQuickDetail() {
         <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Lớp</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {[1,2,3,4,5,6,7,8,8,10,11,12].map(v => {
-              // sửa typo ở đây: 8 xuất hiện 2 lần — bạn có thể thay bằng [1..12]
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(v => {
               const active = klass === v;
-              return (
-                <TouchableOpacity
-                  key={`${v}-${active}`}
-                  onPress={() => setKlass(v)}
-                  style={{
-                    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
-                    backgroundColor: active ? 'rgba(33,208,122,0.25)' : C.card,
-                    borderWidth: 1, borderColor: active ? C.good : C.line,
-                  }}>
-                  <Text style={{ color: C.text, fontWeight: active ? '800' : '600' }}>Lớp {v}</Text>
-                </TouchableOpacity>
-              );
+              return <Chip key={v} active={active} onPress={() => setKlass(v)}>Lớp {v}</Chip>;
             })}
+          </View>
+        </View>
+
+        {/* Topic */}
+        <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
+          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Chủ đề</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {TOPICS.map(t => (
+              <Chip key={t.key} active={topic === t.key} onPress={() => setTopic(t.key)}>
+                {t.label}
+              </Chip>
+            ))}
+          </View>
+        </View>
+
+        {/* Difficulty */}
+        <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.line, marginBottom: 12 }}>
+          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>Độ khó</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {DIFFICULTIES.map(d => (
+              <Chip key={d.key} active={difficulty === d.key} onPress={() => setDifficulty(d.key)}>
+                {d.label}
+              </Chip>
+            ))}
           </View>
         </View>
 

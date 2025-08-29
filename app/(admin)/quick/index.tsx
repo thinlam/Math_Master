@@ -1,7 +1,12 @@
 // app/(admin)/quick/index.tsx
+import { db } from '@/scripts/firebase';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
+import {
+  collection, deleteDoc, doc, DocumentData, getDocs, limit, orderBy,
+  query, QueryDocumentSnapshot, startAfter, where,
+} from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -18,23 +23,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-/* ---------- Firebase ---------- */
-import { db } from '@/scripts/firebase';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  DocumentData,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  QueryDocumentSnapshot,
-  startAfter,
-  where,
-} from 'firebase/firestore';
-
-/* ---------- Types ---------- */
 type QuickDoc = {
   id: string;
   title: string;
@@ -44,7 +32,6 @@ type QuickDoc = {
   titleSearch?: string;
 };
 
-/* ---------- UI ---------- */
 const C = {
   bg: '#0b1220',
   card: 'rgba(255,255,255,0.06)',
@@ -53,7 +40,6 @@ const C = {
   sub: 'rgba(255,255,255,0.65)',
   good: '#21d07a',
   bad: '#ff5a5f',
-  warn: '#ffb020',
 };
 
 const PAGE_SIZE = 20;
@@ -64,23 +50,23 @@ export default function AdminQuickIndex() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [items, setItems] = useState<QuickDoc[]>([]);
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [hasMore, setHasMore] = useState(true);
 
-  // bộ lọc
   const [classFilter, setClassFilter] = useState<number | 'all'>('all');
   const [q, setQ] = useState('');
 
   const firstLoadedRef = useRef(false);
   const colRef = collection(db, 'quick_practice');
 
-  /* ---------- Helpers ---------- */
   const toast = (msg: string) => {
     if (Platform.OS === 'android') ToastAndroid.show(msg, ToastAndroid.SHORT);
   };
 
-  const buildQuery = (opts?: { isLoadMore?: boolean }) => {
+  /* ---------------- Query builder ---------------- */
+  const buildQuery = () => {
     const base: any[] = [];
     if (classFilter !== 'all') base.push(where('class', '==', classFilter));
 
@@ -98,16 +84,17 @@ export default function AdminQuickIndex() {
     );
   };
 
+  /* ---------------- Fetch ---------------- */
   const fetchFirst = useCallback(async () => {
     setLoading(true);
     setHasMore(true);
     setLastDoc(null);
     try {
-      const qSnap = await getDocs(buildQuery());
+      const snap = await getDocs(buildQuery());
       const arr: QuickDoc[] = [];
-      qSnap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) }));
+      snap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) }));
       setItems(arr);
-      const last = qSnap.docs[qSnap.docs.length - 1] || null;
+      const last = snap.docs[snap.docs.length - 1] || null;
       setLastDoc(last);
       setHasMore(Boolean(last));
     } catch (e: any) {
@@ -122,13 +109,12 @@ export default function AdminQuickIndex() {
   const fetchMore = useCallback(async () => {
     if (!hasMore || !lastDoc) return;
     try {
-      const core = buildQuery({ isLoadMore: true });
-      const paginated = query(core, startAfter(lastDoc));
-      const qSnap = await getDocs(paginated);
+      const paginated = query(buildQuery(), startAfter(lastDoc));
+      const snap = await getDocs(paginated);
       const arr: QuickDoc[] = [];
-      qSnap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) }));
+      snap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) }));
       setItems(prev => [...prev, ...arr]);
-      const last = qSnap.docs[qSnap.docs.length - 1] || null;
+      const last = snap.docs[snap.docs.length - 1] || null;
       setLastDoc(last);
       setHasMore(Boolean(last));
     } catch (e: any) {
@@ -137,9 +123,7 @@ export default function AdminQuickIndex() {
     }
   }, [hasMore, lastDoc, classFilter, q]);
 
-  useEffect(() => {
-    fetchFirst();
-  }, [fetchFirst]);
+  useEffect(() => { fetchFirst(); }, [fetchFirst]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -147,14 +131,32 @@ export default function AdminQuickIndex() {
     setRefreshing(false);
   }, [fetchFirst]);
 
+  /* ---------------- Client fallback search (an toàn) ---------------- */
   const filtered = useMemo(() => {
     const qLower = q.trim().toLowerCase();
     if (!qLower) return items;
     return items.filter(it => (it.title || '').toLowerCase().includes(qLower));
   }, [items, q]);
 
-  /* ---------- Delete handler: tách khỏi điều hướng & báo lỗi chi tiết ---------- */
+  /* ---------------- Delete (web-safe) ---------------- */
+  const doDelete = useCallback(async (id: string) => {
+    await deleteDoc(doc(db, 'quick_practice', id));
+    setItems(prev => prev.filter(i => i.id !== id));
+    toast('Đã xoá');
+  }, []);
+
   const onDelete = useCallback((id: string, title?: string) => {
+    if (Platform.OS === 'web') {
+      const ok = window.confirm(`Xoá "${title || id}"? Hành động không thể hoàn tác.`);
+      if (ok) {
+        doDelete(id).catch((e: any) => {
+          console.error(e);
+          alert(`Không xoá được: ${e?.code || ''} ${e?.message || ''}`.trim());
+        });
+      }
+      return;
+    }
+
     Alert.alert(
       'Xoá Quick',
       `Bạn muốn xoá "${title || id}"? Hành động không thể hoàn tác.`,
@@ -164,11 +166,8 @@ export default function AdminQuickIndex() {
           text: 'Xoá',
           style: 'destructive',
           onPress: async () => {
-            try {
-              await deleteDoc(doc(db, 'quick_practice', id));
-              setItems(prev => prev.filter(i => i.id !== id));
-              toast('Đã xoá');
-            } catch (e: any) {
+            try { await doDelete(id); }
+            catch (e: any) {
               console.error(e);
               Alert.alert('Không xoá được', `${e?.code || ''} ${e?.message || ''}`.trim());
             }
@@ -176,14 +175,14 @@ export default function AdminQuickIndex() {
         },
       ],
     );
-  }, []);
+  }, [doDelete]);
 
   const onCopyId = useCallback(async (id: string) => {
     await Clipboard.setStringAsync(id);
     toast('Đã sao chép ID');
   }, []);
 
-  /* ---------- Render ---------- */
+  /* ---------------- Render item ---------------- */
   const renderItem = ({ item }: { item: QuickDoc }) => {
     const count = item.questions?.length ?? 0;
     const goDetail = () =>
@@ -213,7 +212,11 @@ export default function AdminQuickIndex() {
           </View>
 
           {/* Vùng bấm để mở chi tiết */}
-          <TouchableOpacity onPress={goDetail} style={{ flex: 1 }}>
+          <TouchableOpacity
+            onPress={goDetail}
+            style={{ flex: 1 }}
+            onPressIn={(e) => e.stopPropagation?.()}
+          >
             <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }} numberOfLines={1}>
               {item.title || '(Chưa đặt tên)'}
             </Text>
@@ -224,13 +227,13 @@ export default function AdminQuickIndex() {
 
           {/* Actions */}
           <View style={{ flexDirection: 'row', gap: 10, marginLeft: 8 }}>
-            <TouchableOpacity onPress={() => onCopyId(item.id)} hitSlop={10}>
+            <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); onCopyId(item.id); }} hitSlop={10}>
               <Ionicons name="copy-outline" size={18} color={C.sub} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={goDetail} hitSlop={10}>
+            <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); goDetail(); }} hitSlop={10}>
               <Ionicons name="create-outline" size={18} color={C.sub} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onDelete(item.id, item.title)} hitSlop={10}>
+            <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); onDelete(item.id, item.title); }} hitSlop={10}>
               <Ionicons name="trash-outline" size={18} color={C.bad} />
             </TouchableOpacity>
           </View>
@@ -239,6 +242,35 @@ export default function AdminQuickIndex() {
     );
   };
 
+  /* ---------------- Empty & Footer ---------------- */
+  const Empty = () => (
+    <View style={{ alignItems: 'center', marginTop: 28 }}>
+      <Text style={{ color: C.sub, marginBottom: 12 }}>Không có Quick nào phù hợp bộ lọc.</Text>
+      {(q || classFilter !== 'all') && (
+        <TouchableOpacity
+          onPress={() => { setQ(''); setClassFilter('all'); fetchFirst(); }}
+          style={{
+            paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
+            backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: C.line
+          }}
+        >
+          <Text style={{ color: C.text, fontWeight: '700' }}>Xóa bộ lọc</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const Footer = () => (
+    hasMore ? (
+      <View style={{ paddingVertical: 16 }}>
+        <ActivityIndicator />
+      </View>
+    ) : (
+      <Text style={{ color: C.sub, textAlign: 'center', paddingVertical: 16 }}>Đã hiển thị tất cả</Text>
+    )
+  );
+
+  /* ---------------- Main ---------------- */
   return (
     <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
       <StatusBar barStyle="light-content" />
@@ -268,14 +300,12 @@ export default function AdminQuickIndex() {
 
       {/* Filters */}
       <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4, gap: 8 }}>
-        {/* Tìm kiếm */}
-        <View
-          style={{
-            flexDirection: 'row', alignItems: 'center',
-            backgroundColor: C.card, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8,
-            borderWidth: 1, borderColor: C.line
-          }}
-        >
+        {/* Search */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: C.card, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8,
+          borderWidth: 1, borderColor: C.line
+        }}>
           <Ionicons name="search" size={18} color={C.sub} />
           <TextInput
             placeholder="Tìm theo tiêu đề…"
@@ -286,14 +316,14 @@ export default function AdminQuickIndex() {
             returnKeyType="search"
             onSubmitEditing={fetchFirst}
           />
-          {q ? (
+          {!!q && (
             <TouchableOpacity onPress={() => { setQ(''); }} hitSlop={10}>
               <Ionicons name="close-circle" size={18} color={C.sub} />
             </TouchableOpacity>
-          ) : null}
+          )}
         </View>
 
-        {/* Lọc lớp */}
+        {/* Class filter */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {['all', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(v => {
             const active = classFilter === v;
@@ -328,23 +358,9 @@ export default function AdminQuickIndex() {
           renderItem={renderItem}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
           onEndReachedThreshold={0.3}
-          onEndReached={() => {
-            if (q.trim().length === 0 || firstLoadedRef.current) fetchMore();
-          }}
-          ListEmptyComponent={
-            <Text style={{ color: C.sub, textAlign: 'center', marginTop: 24 }}>
-              Không có Quick nào phù hợp bộ lọc.
-            </Text>
-          }
-          ListFooterComponent={
-            hasMore ? (
-              <View style={{ paddingVertical: 16 }}>
-                <ActivityIndicator />
-              </View>
-            ) : (
-              <View style={{ height: 16 }} />
-            )
-          }
+          onEndReached={() => { if (q.trim().length === 0 || firstLoadedRef.current) fetchMore(); }}
+          ListEmptyComponent={<Empty />}
+          ListFooterComponent={<Footer />}
         />
       )}
     </View>

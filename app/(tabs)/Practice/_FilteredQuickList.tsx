@@ -1,40 +1,35 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, StatusBar, Text, TouchableOpacity, View } from 'react-native';
-
-/* Safe area */
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 
 /* Firebase */
 import { db } from '@/scripts/firebase';
 import {
-  collection,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  QueryDocumentSnapshot,
-  startAfter,
-  where,
+    collection,
+    getDocs,
+    limit,
+    orderBy,
+    query,
+    QueryDocumentSnapshot,
+    startAfter,
+    where,
 } from 'firebase/firestore';
 
 type QuickDoc = {
   id: string;
   title: string;
   class: number;
-  topic?: string;
-  difficulty?: string;  // 'easy' | 'medium' | 'hard'
+  topic?: string;        // 'add_sub' | 'mul_div' | 'geometry' | 'algebra' | 'numberSense'
+  difficulty?: string;   // 'easy' | 'medium' | 'hard'
   createdAt?: any;
 };
 
 const PAGE = 20;
 
-export default function QuickScreen() {
+export default function FilteredQuickList({ title }: { title: string }) {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-
-  // nhận params từ Practice.tsx
+  // params được đẩy từ Practice.tsx
   const { grade, topic, difficulty } = useLocalSearchParams<{
     grade?: string;
     topic?: string;
@@ -47,6 +42,7 @@ export default function QuickScreen() {
   const [hasMore, setHasMore] = useState(true);
   const lastRef = useRef<QueryDocumentSnapshot | null>(null);
 
+  // ép kiểu params
   const g = useMemo(() => {
     const n = Number(grade);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -101,19 +97,14 @@ export default function QuickScreen() {
   }, [g, t, d, loadFirst]);
 
   return (
-    <SafeAreaView
-      edges={['top', 'left', 'right']}
-      style={{ flex: 1, backgroundColor: '#0b1220' }}
-    >
-      <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
-
-      {/* Header: đã an toàn tai thỏ/giọt nước nhờ SafeAreaView */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8, paddingTop: 6 }}>
-        <TouchableOpacity onPress={() => router.replace('/(tabs)/Practice')} hitSlop={10}>
+    <View style={{ flex: 1, backgroundColor: '#0b1220', paddingTop: 10 }}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8 }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
           <Ionicons name="chevron-back" size={22} color="#fff" />
         </TouchableOpacity>
         <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18, marginLeft: 8, flex: 1 }}>
-          Luyện nhanh
+          {title}
         </Text>
       </View>
 
@@ -127,7 +118,11 @@ export default function QuickScreen() {
           keyExtractor={(it) => it.id}
           renderItem={({ item }) => (
             <TouchableOpacity
-              onPress={() => router.push(`/Practice/Quick/Set/${item.id}`)}
+              onPress={() => {
+                // tuỳ luồng của bạn, điều hướng vào màn chơi/chi tiết
+                // ví dụ: /Practice/Quick/Set/[id]
+                router.push(`/Practice/Quick/Set/${item.id}`);
+              }}
               style={{
                 backgroundColor: 'rgba(255,255,255,0.06)',
                 borderColor: 'rgba(255,255,255,0.12)',
@@ -137,11 +132,8 @@ export default function QuickScreen() {
                 borderRadius: 14,
                 padding: 12,
               }}
-              activeOpacity={0.85}
             >
-              <Text style={{ color: '#fff', fontWeight: '700' }} numberOfLines={1}>
-                {item.title}
-              </Text>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>{item.title}</Text>
               <Text style={{ color: 'rgba(255,255,255,0.65)', marginTop: 4 }}>
                 Lớp {item.class}
                 {item.topic ? ` • ${item.topic}` : ''}
@@ -151,7 +143,6 @@ export default function QuickScreen() {
           )}
           onEndReachedThreshold={0.4}
           onEndReached={loadMore}
-          showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <Text style={{ color: 'rgba(255,255,255,0.65)', textAlign: 'center', marginTop: 24 }}>
               Không có dữ liệu phù hợp bộ lọc.
@@ -164,11 +155,8 @@ export default function QuickScreen() {
               </View>
             ) : null
           }
-          // chừa chỗ cho home indicator/gesture bar
-          contentContainerStyle={{ paddingBottom: 16 + insets.bottom }}
-          keyboardShouldPersistTaps="handled"
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }

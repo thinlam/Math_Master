@@ -33,12 +33,15 @@ import {
 } from 'firebase/firestore';
 
 /* ---------- Types ---------- */
-type Difficulty = 'easy' | 'medium' | 'hard' | number;
+type TopicKey = 'add_sub' | 'mul_div' | 'geometry' | 'algebra' | 'numberSense';
+type DifficultyKey = 'easy' | 'medium' | 'hard' | number;
+type Difficulty = DifficultyKey;
+
 type PracticeSet = {
   id: string;
   title: string;
   grade: number;
-  topic?: string;
+  topic?: TopicKey | string;
   difficulty?: Difficulty;
   questionCount?: number;
   coverUrl?: string;
@@ -50,24 +53,22 @@ type ProgressDoc = { done?: number; total?: number };
 
 /* ---------- Const ---------- */
 const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
-const TOPICS = ['Cộng trừ', 'Nhân chia', 'Hình học', 'Đại số', 'Số học', 'Phân số', 'Tư duy'];
-const DIFFS: { key: Difficulty; label: string }[] = [
-  { key: 'easy', label: 'Dễ' },
+const TOPICS: { key: TopicKey; label: string }[] = [
+  { key: 'add_sub',     label: 'Cộng trừ' },
+  { key: 'mul_div',     label: 'Nhân chia' },
+  { key: 'geometry',    label: 'Hình học' },
+  { key: 'algebra',     label: 'Đại số' },
+  { key: 'numberSense', label: 'Số học' },
+];
+const DIFFS: { key: DifficultyKey; label: string }[] = [
+  { key: 'easy',   label: 'Dễ' },
   { key: 'medium', label: 'Vừa' },
-  { key: 'hard', label: 'Khó' },
+  { key: 'hard',   label: 'Khó' },
 ];
 
-/* Màu “tone” riêng cho tag độ khó (cố định nhẹ nhàng, phần còn lại dùng palette) */
-const TONE = {
-  green: '#22C55E',
-  amber: '#F59E0B',
-  red: '#EF4444',
-};
-const TONE_BG = {
-  green: '#0F2B1A',
-  amber: '#2A2108',
-  red: '#2B0F13',
-};
+/* Màu “tone” riêng cho tag độ khó */
+const TONE = { green: '#22C55E', amber: '#F59E0B', red: '#EF4444' };
+const TONE_BG = { green: '#0F2B1A', amber: '#2A2108', red: '#2B0F13' };
 
 /* ---------- Main Component ---------- */
 export default function PracticeScreen() {
@@ -78,8 +79,8 @@ export default function PracticeScreen() {
 
   /* ---------- Filters ---------- */
   const [grade, setGrade] = useState<number | null>(null);
-  const [topic, setTopic] = useState<string | null>(null);
-  const [diff, setDiff] = useState<Difficulty | null>(null);
+  const [topic, setTopic] = useState<TopicKey | null>(null);
+  const [diff, setDiff] = useState<DifficultyKey | null>(null);
 
   /* ---------- Data States ---------- */
   const [items, setItems] = useState<PracticeSet[]>([]);
@@ -96,44 +97,11 @@ export default function PracticeScreen() {
 
   const buildQuery = useCallback(() => {
     const colRef = collection(db, 'practiceSets');
-    let q: any = query(
-      colRef,
-      where('published', '==', true),
-      orderBy('updatedAt', 'desc'),
-      limit(pageSize)
-    );
-
-    if (grade !== null) {
-      q = query(colRef, where('published', '==', true), where('grade', '==', grade), orderBy('updatedAt', 'desc'), limit(pageSize));
-    }
-    if (topic) {
-      if (grade !== null) {
-        q = query(
-          colRef,
-          where('published', '==', true),
-          where('grade', '==', grade),
-          where('topic', '==', topic),
-          orderBy('updatedAt', 'desc'),
-          limit(pageSize)
-        );
-      } else {
-        q = query(
-          colRef,
-          where('published', '==', true),
-          where('topic', '==', topic),
-          orderBy('updatedAt', 'desc'),
-          limit(pageSize)
-        );
-      }
-    }
-    if (diff !== null) {
-      const base: any[] = [where('published', '==', true)];
-      if (grade !== null) base.push(where('grade', '==', grade));
-      if (topic) base.push(where('topic', '==', topic));
-      base.push(where('difficulty', '==', diff));
-      q = query(colRef, ...base, orderBy('updatedAt', 'desc'), limit(pageSize));
-    }
-    return q;
+    const base: any[] = [where('published', '==', true)];
+    if (grade !== null) base.push(where('grade', '==', grade));
+    if (topic) base.push(where('topic', '==', topic));               // topic là KEY
+    if (diff !== null) base.push(where('difficulty', '==', diff));   // diff: 'easy'|'medium'|'hard'|number
+    return query(colRef, ...base, orderBy('updatedAt', 'desc'), limit(pageSize));
   }, [grade, topic, diff]);
 
   const fetchPage = useCallback(
@@ -149,9 +117,7 @@ export default function PracticeScreen() {
         }
 
         let q = buildQuery();
-        if (!first && lastSnapRef.current) {
-          q = query(q, startAfter(lastSnapRef.current));
-        }
+        if (!first && lastSnapRef.current) q = query(q, startAfter(lastSnapRef.current));
 
         const snap = await getDocs(q);
         const rows: PracticeSet[] = [];
@@ -170,25 +136,20 @@ export default function PracticeScreen() {
           });
         });
 
-        if (first) {
-          setItems(rows);
-        } else {
-          setItems((prev) => [...prev, ...rows]);
-        }
+        if (first) setItems(rows);
+        else setItems((prev) => [...prev, ...rows]);
 
-        if (snap.docs.length < pageSize) {
-          setHasMore(false);
-        } else {
-          lastSnapRef.current = snap.docs[snap.docs.length - 1] ?? null;
-        }
+        if (snap.docs.length < pageSize) setHasMore(false);
+        else lastSnapRef.current = snap.docs[snap.docs.length - 1] ?? null;
 
+        // progress
         const uid = auth.currentUser?.uid;
         if (uid) {
           const entries = await Promise.all(
             rows.map(async (it) => {
               const pRef = doc(db, 'users', uid, 'progress', it.id);
               const pSnap = await getDoc(pRef);
-              return [it.id, (pSnap.exists() ? (pSnap.data() as ProgressDoc) : { done: 0, total: it.questionCount ?? 0 })] as const;
+              return [it.id, pSnap.exists() ? (pSnap.data() as ProgressDoc) : { done: 0, total: it.questionCount ?? 0 }] as const;
             })
           );
           setProgressMap((prev) => {
@@ -222,7 +183,10 @@ export default function PracticeScreen() {
   const header = useMemo(
     () => (
       <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
-        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
+        <StatusBar
+          barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={palette.bg}
+        />
         <View style={styles.headerTextWrap}>
           <Text style={styles.headerTitle}>Luyện tập</Text>
           <Text style={styles.headerSub}>Chọn bộ bài theo lớp, chủ đề và độ khó.</Text>
@@ -233,19 +197,46 @@ export default function PracticeScreen() {
           <QuickButton
             icon="flash-outline"
             label="Luyện nhanh"
-            onPress={() => router.push('/Practice/Quick')}
+            onPress={() =>
+              router.push({
+                pathname: '/Practice/Quick',
+                params: {
+                  grade: grade ?? '',
+                  topic: topic ?? '',
+                  difficulty: typeof diff === 'number' ? String(diff) : (diff ?? ''),
+                },
+              })
+            }
             palette={palette}
           />
           <QuickButton
             icon="timer-outline"
             label="Thi tốc độ"
-            onPress={() => router.push('/Practice/Speed')}
+            onPress={() =>
+              router.push({
+                pathname: '/Practice/Speed',
+                params: {
+                  grade: grade ?? '',
+                  topic: topic ?? '',
+                  difficulty: typeof diff === 'number' ? String(diff) : (diff ?? ''),
+                },
+              })
+            }
             palette={palette}
           />
           <QuickButton
             icon="calendar-outline"
             label="Thử thách ngày"
-            onPress={() => router.push('/Practice/Daily')}
+            onPress={() =>
+              router.push({
+                pathname: '/Practice/Daily',
+                params: {
+                  grade: grade ?? '',
+                  topic: topic ?? '',
+                  difficulty: typeof diff === 'number' ? String(diff) : (diff ?? ''),
+                },
+              })
+            }
             palette={palette}
           />
         </View>
@@ -259,8 +250,8 @@ export default function PracticeScreen() {
         />
         <FilterRow
           label="Chủ đề"
-          data={TOPICS.map((t) => ({ key: t, label: t, active: topic === t }))}
-          onPress={(k) => setTopic((prev) => (prev === k ? null : k))}
+          data={TOPICS.map((t) => ({ key: t.key, label: t.label, active: topic === t.key }))}
+          onPress={(k) => setTopic((prev) => (prev === (k as TopicKey) ? null : (k as TopicKey)))}
           palette={palette}
         />
         <FilterRow
@@ -308,8 +299,19 @@ export default function PracticeScreen() {
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
                 <Tag text={`Lớp ${item.grade}`} palette={palette} />
-                {!!item.topic && <Tag text={item.topic} palette={palette} />}
-                {!!item.difficulty && <Tag text={diffLabel(item.difficulty)} tone={diffTone(item.difficulty)} palette={palette} />}
+                {!!item.topic && (
+                  <Tag
+                    text={TOPICS.find(t => t.key === item.topic)?.label ?? String(item.topic)}
+                    palette={palette}
+                  />
+                )}
+                {!!item.difficulty && (
+                  <Tag
+                    text={diffLabel(item.difficulty)}
+                    tone={diffTone(item.difficulty)}
+                    palette={palette}
+                  />
+                )}
               </View>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
@@ -434,13 +436,13 @@ function FilterRow({
             }}
           >
             <Text
-  style={{
-    color: item.active ? '#FFFFFF' : palette.textFaint,
-    fontWeight: item.active ? '700' : '500',
-  }}
->
-  {item.label}
-</Text>
+              style={{
+                color: item.active ? '#FFFFFF' : palette.textFaint,
+                fontWeight: item.active ? '700' : '500',
+              }}
+            >
+              {item.label}
+            </Text>
           </TouchableOpacity>
         )}
         horizontal
