@@ -34,7 +34,7 @@ import {
 
 /* ---------- Types ---------- */
 type TopicKey = 'add_sub' | 'mul_div' | 'geometry' | 'algebra' | 'numberSense';
-type DifficultyKey = 'easy' | 'medium' | 'hard' | number;
+type DifficultyKey = 'easy' | 'medium' | 'hard';
 type Difficulty = DifficultyKey;
 
 type PracticeSet = {
@@ -99,8 +99,9 @@ export default function PracticeScreen() {
     const colRef = collection(db, 'practiceSets');
     const base: any[] = [where('published', '==', true)];
     if (grade !== null) base.push(where('grade', '==', grade));
-    if (topic) base.push(where('topic', '==', topic));               // topic là KEY
-    if (diff !== null) base.push(where('difficulty', '==', diff));   // diff: 'easy'|'medium'|'hard'|number
+    if (topic) base.push(where('topic', '==', topic));             // topic là KEY
+    if (diff) base.push(where('difficulty', '==', diff));          // diff là string: 'easy'|'medium'|'hard'
+    // ORDER: phải khớp index (updatedAt desc, __name__ sẽ tự thêm khi phân trang)
     return query(colRef, ...base, orderBy('updatedAt', 'desc'), limit(pageSize));
   }, [grade, topic, diff]);
 
@@ -144,7 +145,7 @@ export default function PracticeScreen() {
 
         // progress
         const uid = auth.currentUser?.uid;
-        if (uid) {
+        if (uid && rows.length) {
           const entries = await Promise.all(
             rows.map(async (it) => {
               const pRef = doc(db, 'users', uid, 'progress', it.id);
@@ -159,7 +160,7 @@ export default function PracticeScreen() {
           });
         }
       } catch (e) {
-        console.error(e);
+        console.error('[Practice] fetchPage error:', e);
       } finally {
         setLoading(false);
         setPaging(false);
@@ -203,7 +204,7 @@ export default function PracticeScreen() {
                 params: {
                   grade: grade ?? '',
                   topic: topic ?? '',
-                  difficulty: typeof diff === 'number' ? String(diff) : (diff ?? ''),
+                  difficulty: diff ?? '',
                 },
               })
             }
@@ -218,7 +219,7 @@ export default function PracticeScreen() {
                 params: {
                   grade: grade ?? '',
                   topic: topic ?? '',
-                  difficulty: typeof diff === 'number' ? String(diff) : (diff ?? ''),
+                  difficulty: diff ?? '',
                 },
               })
             }
@@ -233,7 +234,7 @@ export default function PracticeScreen() {
                 params: {
                   grade: grade ?? '',
                   topic: topic ?? '',
-                  difficulty: typeof diff === 'number' ? String(diff) : (diff ?? ''),
+                  difficulty: diff ?? '',
                 },
               })
             }
@@ -256,10 +257,10 @@ export default function PracticeScreen() {
         />
         <FilterRow
           label="Độ khó"
-          data={DIFFS.map((d) => ({ key: String(d.key), label: d.label, active: String(diff) === String(d.key) }))}
+          data={DIFFS.map((d) => ({ key: d.key, label: d.label, active: diff === d.key }))}
           onPress={(k) => {
-            const found = DIFFS.find((d) => String(d.key) === k)?.key ?? null;
-            setDiff((prev) => (String(prev) === k ? null : found));
+            const found = DIFFS.find((d) => d.key === (k as DifficultyKey))?.key ?? null;
+            setDiff((prev) => (prev === found ? null : found));
           }}
           palette={palette}
         />
@@ -472,15 +473,15 @@ function Tag({
 }
 
 function diffLabel(d: Difficulty) {
-  if (d === 'easy' || d === 1) return 'Dễ';
-  if (d === 'medium' || d === 2) return 'Vừa';
-  if (d === 'hard' || d === 3) return 'Khó';
+  if (d === 'easy') return 'Dễ';
+  if (d === 'medium') return 'Vừa';
+  if (d === 'hard') return 'Khó';
   return String(d);
 }
 function diffTone(d: Difficulty): 'green' | 'amber' | 'red' | undefined {
-  if (d === 'easy' || d === 1) return 'green';
-  if (d === 'medium' || d === 2) return 'amber';
-  if (d === 'hard' || d === 3) return 'red';
+  if (d === 'easy') return 'green';
+  if (d === 'medium') return 'amber';
+  if (d === 'hard') return 'red';
   return undefined;
 }
 

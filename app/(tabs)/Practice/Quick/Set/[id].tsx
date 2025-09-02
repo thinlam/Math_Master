@@ -133,7 +133,7 @@ export default function QuickSetScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", padding: 16, gap: 8 }}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
+        <TouchableOpacity onPress={() => router.replace('/(tabs)/Practice')} hitSlop={10}>
           <Ionicons name="chevron-back" size={22} color={C.text} />
         </TouchableOpacity>
         <Text style={{ color: C.text, fontSize: 18, fontWeight: "600" }}>Quick Set</Text>
