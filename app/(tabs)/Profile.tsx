@@ -1,3 +1,4 @@
+// app/(tabs)/Profile/index.tsx
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -20,10 +21,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  onSnapshot
+} from 'firebase/firestore';
 
 import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
+/* ---------------- I18N ---------------- */
 const I18N = {
   vi: {
     user: 'Người dùng',
@@ -80,7 +87,6 @@ const I18N = {
     pullToRefresh: 'Pull to refresh',
   },
 } as const;
-
 type Lang = 'vi' | 'en';
 const SETTINGS_KEYS = {
   language: 'profile_language',
@@ -89,6 +95,7 @@ const SETTINGS_KEYS = {
 };
 function t(lang: Lang, key: keyof typeof I18N['vi']) { return I18N[lang][key]; }
 
+/* ---------------- Types ---------------- */
 type BadgeItem = { id: string; title: string; icon: string };
 type UserProfile = {
   uid: string;
@@ -96,11 +103,11 @@ type UserProfile = {
   email: string;
   level: string | null;
   points: number;
-  badges: BadgeItem[];
   streak: number;
   photoURL?: string | null;
 };
 
+/* ---------------- Styles ---------------- */
 function makeStyles(p: Palette) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: p.bg },
@@ -113,31 +120,35 @@ function makeStyles(p: Palette) {
     email: { fontSize: 13, color: p.textMuted, marginTop: 2 },
     levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
     levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
-    statsRow: { flexDirection: 'row', gap: 12 },
-    statIconWrap: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
     logoutBtn: { marginTop: 6, backgroundColor: p.danger, borderRadius: 12, paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
     logoutTxt: { color: '#fff', fontWeight: '700' },
-    editBtn: { flexDirection: 'row', gap: 6, backgroundColor: p.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-    editTxt: { color: p.editBtnText, fontWeight: '700' },
     link: { color: p.link, fontSize: 13, fontWeight: '600' },
   });
 }
 
+/* ---------------- Screen ---------------- */
 export default function ProfileScreen() {
   const router = useRouter();
   const { colorScheme, palette, setTheme } = useTheme();
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
+  // Settings
   const [language, setLanguage] = useState<Lang>('vi');
   const [notifStudy, setNotifStudy] = useState(true);
   const [notifMarketing, setNotifMarketing] = useState(false);
 
+  // Firebase & data
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [badgeCount, setBadgeCount] = useState(0);
+  const [latestBadges, setLatestBadges] = useState<BadgeItem[]>([]);
+
+  // UI
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /* ---- load local settings ---- */
   useEffect(() => {
     (async () => {
       const [l, s, m] = await Promise.all([
@@ -151,6 +162,7 @@ export default function ProfileScreen() {
     })();
   }, []);
 
+  /* ---- auth state ---- */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
@@ -159,12 +171,14 @@ export default function ProfileScreen() {
     return unsub;
   }, [router]);
 
+  /* ---- fetch profile once ---- */
   const fetchProfile = useCallback(async (u: User) => {
     setLoading(true); setError(null);
     try {
       const ref = doc(db, 'users', u.uid);
       const snap = await getDoc(ref);
       const data = snap.exists() ? (snap.data() as any) : {};
+
       const profile: UserProfile = {
         uid: u.uid,
         name: u.displayName || data.name || t(language, 'user'),
@@ -172,22 +186,73 @@ export default function ProfileScreen() {
         photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
         level: data.level ?? null,
         points: typeof data.points === 'number' ? data.points : 0,
-        streak: typeof data.streak === 'number' ? data.streak : 0,
-        badges: Array.isArray(data.badges) ? data.badges : [],
+        // hỗ trợ nhiều key cho streak
+        streak: (typeof data.streak_days === 'number' && data.streak_days) ||
+                (typeof data.streakDays === 'number' && data.streakDays) ||
+                (typeof data.streak === 'number' && data.streak) || 0,
       };
       setUser(profile);
-    } catch (e) { console.error(e); setError(t(language, 'errorLoad')); }
-    finally { setLoading(false); }
+    } catch (e) {
+      console.error(e);
+      setError(t(language, 'errorLoad'));
+    } finally {
+      setLoading(false);
+    }
   }, [language]);
 
   useEffect(() => { if (firebaseUser) fetchProfile(firebaseUser); }, [firebaseUser, fetchProfile]);
-
   useFocusEffect(useCallback(() => {
     let active = true;
     (async () => { if (active && firebaseUser) await fetchProfile(firebaseUser); })();
     return () => { active = false; };
   }, [firebaseUser, fetchProfile]));
 
+  /* ---- live subscribe: user doc + badge subcollection ---- */
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const uid = firebaseUser.uid;
+
+    // user doc: cập nhật streak, points, level theo thời gian thực
+    const unsubUser = onSnapshot(doc(db, 'users', uid), (snap) => {
+      const d = snap.data() || {};
+      setUser((prev) => prev ? {
+        ...prev,
+        level: d.level ?? prev.level ?? null,
+        points: typeof d.points === 'number' ? d.points : prev.points,
+        streak: (typeof d.streak_days === 'number' && d.streak_days) ||
+                (typeof d.streakDays === 'number' && d.streakDays) ||
+                (typeof d.streak === 'number' && d.streak) ||
+                prev.streak || 0,
+        photoURL: (d.photoURL as string) ?? prev.photoURL ?? null,
+        name: d.name ?? prev.name,
+        email: d.email ?? prev.email,
+      } : null);
+    });
+
+    // badges: đếm completed + lấy 3 mới nhất
+    const colRef = collection(db, 'users', uid, 'badges');
+    const unsubBadges = onSnapshot(colRef, (qs) => {
+      let count = 0;
+      const list: { id: string; title?: string; icon?: string; unlockedAt?: any }[] = [];
+      qs.forEach((d) => {
+        const data = d.data() as any;
+        if (data?.completed) count++;
+        list.push({ id: d.id, title: data?.title, icon: data?.icon, unlockedAt: data?.unlockedAt });
+      });
+      // sort desc by unlockedAt
+      list.sort((a, b) => ((b.unlockedAt?.seconds ?? 0) - (a.unlockedAt?.seconds ?? 0)));
+      setBadgeCount(count);
+      const mapped: BadgeItem[] = list
+        .filter((x) => !!x.title || !!x.icon) // nếu có meta
+        .slice(0, 3)
+        .map((x) => ({ id: x.id, title: x.title ?? x.id, icon: x.icon ?? 'medal-outline' }));
+      setLatestBadges(mapped);
+    });
+
+    return () => { unsubUser(); unsubBadges(); };
+  }, [firebaseUser]);
+
+  /* ---- helpers ---- */
   const initials = useMemo(() => {
     const n = user?.name?.trim() || ''; const parts = n.split(/\s+/);
     const a = (parts[0]?.[0] || '').toUpperCase();
@@ -207,10 +272,11 @@ export default function ProfileScreen() {
     setRefreshing(false);
   }, [firebaseUser, fetchProfile]);
 
+  /* ---- Loading / Error ---- */
   if (!firebaseUser || loading) {
     return (
       <SafeAreaView style={styles.container} edges={['top','left','right']}>
-        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size="large" />
           <Text style={{ color: palette.textMuted }}>{t(language, 'loading')}</Text>
@@ -222,7 +288,7 @@ export default function ProfileScreen() {
   if (error || !user) {
     return (
       <SafeAreaView style={styles.container} edges={['top','left','right']}>
-        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
           <Text style={{ color: palette.danger }}>{error || t(language, 'errorLoad')}</Text>
           <TouchableOpacity style={{ backgroundColor: palette.brandSoft, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }} onPress={() => firebaseUser && fetchProfile(firebaseUser)}>
@@ -233,9 +299,10 @@ export default function ProfileScreen() {
     );
   }
 
+  /* ---- Render ---- */
   return (
     <SafeAreaView style={styles.container} edges={['top','left','right']}>
-      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
 
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -256,13 +323,20 @@ export default function ProfileScreen() {
               <Text style={styles.name} numberOfLines={1}>{user.name}</Text>
               <Text style={styles.email} numberOfLines={1}>{user.email}</Text>
 
-              <View style={[styles.levelPill, { marginTop: 8 }, !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' }]}>
+              <View style={[
+                styles.levelPill,
+                { marginTop: 8 },
+                !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' }
+              ]}>
                 <Ionicons name="school-outline" size={16} color={palette.ionMain} />
                 <Text style={styles.levelTxt}>{user.level || t(language, 'noClass')}</Text>
               </View>
             </View>
 
-            <TouchableOpacity style={{ flexDirection: 'row', gap: 6, backgroundColor: palette.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' }} onPress={() => router.push('/(EditProfile)/edit')}>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', gap: 6, backgroundColor: palette.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' }}
+              onPress={() => router.push('/(EditProfile)/edit')}
+            >
               <Ionicons name="create-outline" size={18} color={palette.editBtnText} />
               <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>{t(language, 'edit')}</Text>
             </TouchableOpacity>
@@ -272,28 +346,38 @@ export default function ProfileScreen() {
         {/* Stats */}
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <StatCard icon="diamond-stone" color="#9333EA" label={t(language, 'points')} value={String(user.points)} palette={palette} />
-          <StatCard icon="medal-outline" color={palette.mciGold} label={t(language, 'badges')} value={String(user.badges?.length || 0)} palette={palette} />
+          <StatCard icon="medal-outline" color={palette.mciGold} label={t(language, 'badges')} value={String(badgeCount)} palette={palette} />
           <StatCard icon="fire" color={palette.streak} label={t(language, 'streak')} value={`${user.streak} ${t(language, 'days')}`} palette={palette} />
         </View>
 
-        {/* Badges */}
+        {/* Earned Badges (latest 3) */}
         <View style={styles.card}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>{t(language, 'earnedBadges')}</Text>
-            <TouchableOpacity onPress={() => router.push('/profile/Badges')}>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/Profile/Badges')}>
               <Text style={styles.link}>{t(language, 'viewAll')}</Text>
             </TouchableOpacity>
           </View>
 
-          {user.badges?.length ? (
+          {latestBadges.length ? (
             <FlatList
-              data={user.badges}
+              data={latestBadges}
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 12 }}
+              contentContainerStyle={{ gap: 12, paddingTop: 10 }}
               keyExtractor={(b) => b.id}
               renderItem={({ item }) => (
-                <View style={{ width: 110, height: 78, borderRadius: 12, borderWidth: 1, borderColor: palette.cardBorder, backgroundColor: palette.bg, padding: 10, justifyContent: 'center', gap: 6 }}>
+                <View style={{
+                  width: 110,
+                  height: 78,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: palette.cardBorder,
+                  backgroundColor: palette.bg,
+                  padding: 10,
+                  justifyContent: 'center',
+                  gap: 6
+                }}>
                   <MaterialCommunityIcons name={item.icon as any} size={22} color={palette.mciGold} />
                   <Text style={{ color: palette.textFaint, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
                 </View>
@@ -313,12 +397,18 @@ export default function ProfileScreen() {
         {/* App Settings */}
         <Section title={t(language, 'appSettings')} palette={palette}>
           <SettingSwitch icon="moon-outline" label={t(language, 'darkMode')} value={colorScheme === 'dark'} onValueChange={(v) => setTheme(v ? 'dark' : 'light')} palette={palette} />
-          <SettingPicker icon="language-outline" label={t(language, 'language')} value={language === 'vi' ? 'Tiếng Việt' : 'English'} onPress={async () => {
-            const next = language === 'vi' ? 'en' : 'vi';
-            setLanguage(next);
-            await AsyncStorage.setItem(SETTINGS_KEYS.language, next);
-            if (firebaseUser) fetchProfile(firebaseUser);
-          }} palette={palette} />
+          <SettingPicker
+            icon="language-outline"
+            label={t(language, 'language')}
+            value={language === 'vi' ? 'Tiếng Việt' : 'English'}
+            onPress={async () => {
+              const next = language === 'vi' ? 'en' : 'vi';
+              setLanguage(next);
+              await AsyncStorage.setItem(SETTINGS_KEYS.language, next);
+              if (firebaseUser) fetchProfile(firebaseUser);
+            }}
+            palette={palette}
+          />
         </Section>
 
         {/* Notifications */}
@@ -339,7 +429,7 @@ export default function ProfileScreen() {
   );
 }
 
-/* ---------- Sub Components ---------- */
+/* ---------------- Sub Components ---------------- */
 function StatCard({ icon, label, value, color, palette }: { icon: any; label: string; value: string; color: string; palette: Palette; }) {
   return (
     <View style={{ flex: 1, backgroundColor: palette.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: palette.cardBorder, alignItems: 'flex-start', gap: 6 }}>

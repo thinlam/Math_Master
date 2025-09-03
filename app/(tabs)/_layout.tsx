@@ -112,6 +112,10 @@ export default function TabLayout() {
         name="Practice/Quick/Set/[id]/Question/[qid]"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="Profile/Badges"
+        options={{ href: null }}  
+      />
     </Tabs>
   );
 }

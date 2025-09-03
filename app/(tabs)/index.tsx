@@ -22,7 +22,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
-  /* thêm cho thông báo: */
   collection,
   doc, getDoc,
   limit,
@@ -55,6 +54,9 @@ const I18N = {
     loading: 'Đang tải...',
     coins: 'Xu',
     topup: 'Nạp xu',
+    earnedBadges: 'Huy hiệu đã đạt',
+    viewAll: 'Xem tất cả',
+    noBadges: 'Chưa có huy hiệu nào.',
   },
 } as const;
 
@@ -62,14 +64,14 @@ type Lang = 'vi';
 const LANG: Lang = 'vi';
 function t(key: keyof typeof I18N['vi']) { return I18N[LANG][key]; }
 
-type BadgeItem = { id: string; title: string; icon: string };
+type BadgeItem = { id: string; title: string; icon: string; unlockedAt?: Timestamp | null };
 type UserProfile = {
   uid: string;
   name: string;
   email: string;
   level: string | null;
   points: number;
-  badges: BadgeItem[];
+  badges: BadgeItem[]; // (không dùng để đếm nữa, nhưng giữ type cho tương thích)
   streak: number;
   photoURL?: string | null;
   coins: number;
@@ -86,7 +88,11 @@ function classToGradeNumber(levelStr: string): number | null {
   const m = levelStr.match(/\d+/); if (!m) return null;
   const n = Number(m[0]); return n >= 1 && n <= 12 ? n : null;
 }
-function formatCoins(n: number) { return new Intl.NumberFormat('vi-VN').format(n); }
+function colorMix(bg: string, fg: string, alpha = 0.1) {
+  const a = Math.max(0, Math.min(1, alpha));
+  const hexAlpha = Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase();
+  return `${fg}${hexAlpha}`;
+}
 
 /* ====== THÔNG BÁO ====== */
 type Ann = { id: string; title: string; body?: string | null; createdAt?: Timestamp | null };
@@ -112,6 +118,10 @@ export default function HomeScreen() {
   const [lastSeenAnn, setLastSeenAnn] = useState<Date | null>(null);
   const [initialAnnLoaded, setInitialAnnLoaded] = useState(false);
 
+  /* ===== Badges (đếm & list gần đây) ===== */
+  const [badgeCount, setBadgeCount] = useState(0);
+  const [latestBadges, setLatestBadges] = useState<BadgeItem[]>([]);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
@@ -135,7 +145,7 @@ export default function HomeScreen() {
           level: data.level ?? null,
           points: typeof data.points === 'number' ? data.points : 0,
           streak: typeof data.streak === 'number' ? data.streak : 0,
-          badges: Array.isArray(data.badges) ? data.badges : [],
+          badges: [], // không dùng field cũ nữa
           coins: typeof data.coins === 'number' ? data.coins : 0,
           role: (data.role as 'user' | 'premium' | 'admin') ?? 'user',
         };
@@ -146,6 +156,41 @@ export default function HomeScreen() {
   );
 
   useEffect(() => { if (firebaseUser) fetchProfile(firebaseUser); }, [firebaseUser, fetchProfile]);
+
+  /* === Subscribe badges đúng chỗ: users/{uid}/badges === */
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const uid = firebaseUser.uid;
+
+    const unsub = onSnapshot(collection(db, 'users', uid, 'badges'), (qs) => {
+      let count = 0;
+      const list: BadgeItem[] = [];
+      qs.forEach((d) => {
+        const data = d.data() as any;
+        const completed = !!data?.completed;
+        if (completed) {
+          count++;
+          list.push({
+            id: d.id,
+            title: data.title ?? d.id,
+            icon: data.icon ?? 'medal-outline',
+            unlockedAt: data.unlockedAt ?? null,
+          });
+        }
+      });
+
+      list.sort((a, b) => {
+        const ta = (a.unlockedAt as any)?.seconds ?? 0;
+        const tb = (b.unlockedAt as any)?.seconds ?? 0;
+        return tb - ta;
+      });
+
+      setBadgeCount(count);
+      setLatestBadges(list.slice(0, 8));
+    });
+
+    return () => unsub();
+  }, [firebaseUser]);
 
   const onRefresh = useCallback(async () => {
     if (!firebaseUser) return;
@@ -171,7 +216,7 @@ export default function HomeScreen() {
       setSavingClass(true);
       await updateDoc(doc(db, 'users', firebaseUser.uid), { level: selectedClass });
       setUser((prev) => (prev ? { ...prev, level: selectedClass } : prev));
-      const g = classToGradeNumber(selectedClass); if (g) await AsyncStorage.setItem('selectedGrade', String(g));
+      const m = selectedClass.match(/\d+/); if (m) await AsyncStorage.setItem('selectedGrade', String(Number(m[0])));
       closeClassModal(); router.push('/');
     } catch (e) { console.error(e); Alert.alert('Lỗi', 'Không thể lưu lớp. Vui lòng thử lại.'); }
     finally { setSavingClass(false); }
@@ -179,8 +224,8 @@ export default function HomeScreen() {
 
   const handleStartLearning = useCallback(async () => {
     const levelStr = user?.level ?? selectedClass;
-    const g = levelStr ? classToGradeNumber(levelStr) : null;
-    if (g) await AsyncStorage.setItem('selectedGrade', String(g));
+    const m = levelStr?.match(/\d+/);
+    if (m) await AsyncStorage.setItem('selectedGrade', String(Number(m[0])));
     router.push('/Learnning/Learn');
   }, [router, user?.level, selectedClass]);
 
@@ -228,7 +273,7 @@ export default function HomeScreen() {
       }
     });
     return unsub;
-     
+
   }, [initialAnnLoaded, lastSeenAnn]);
 
   const unreadCount = useMemo(() => {
@@ -377,9 +422,39 @@ export default function HomeScreen() {
           <Text style={styles.cardTitle}>{t('stats')}</Text>
           <View style={styles.statsRow}>
             <StatCard palette={palette} icon="diamond-stone" color="#9333EA" label={t('points')} value={String(user?.points ?? 0)} />
-            <StatCard palette={palette} icon="medal-outline" color={palette.mciGold} label={t('badges')} value={String(user?.badges?.length ?? 0)} />
+            <StatCard palette={palette} icon="medal-outline" color={palette.mciGold} label={t('badges')} value={String(badgeCount)} />
             <StatCard palette={palette} icon="fire" color={palette.streak} label={t('streak')} value={`${user?.streak ?? 0} ${t('days')}`} />
           </View>
+        </View>
+
+        {/* Huy hiệu gần đây (tuỳ chọn) */}
+        <View style={styles.card}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.cardTitle}>{t('earnedBadges')}</Text>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/Profile/Badges')}>
+              <Text style={{ color: palette.link, fontWeight: '700' }}>{t('viewAll')}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {latestBadges.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+              {latestBadges.map((b) => (
+                <View
+                  key={b.id}
+                  style={{
+                    width: 110, height: 80, borderRadius: 12,
+                    borderWidth: 1, borderColor: palette.cardBorder,
+                    backgroundColor: palette.bg, padding: 10, justifyContent: 'center', gap: 6
+                  }}
+                >
+                  <MaterialCommunityIcons name={b.icon as any} size={22} color={palette.mciGold} />
+                  <Text style={{ color: palette.textFaint, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{b.title}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          ) : (
+            <Text style={{ marginTop: 6, color: palette.textMuted, fontSize: 13 }}>{t('noBadges')}</Text>
+          )}
         </View>
       </ScrollView>
 
@@ -511,11 +586,6 @@ function makeStyles(p: Palette) {
     levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
     levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
 
-    coinPill: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
-    coinTxt: { color: p.textFaint, fontSize: 12, fontWeight: '700' },
-    topupBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: p.editBtnBg, marginLeft: 4 },
-    topupTxt: { color: p.editBtnText, fontWeight: '700', fontSize: 12 },
-
     changeBtn: { flexDirection: 'row', gap: 6, backgroundColor: p.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' },
     changeTxt: { color: p.editBtnText, fontWeight: '700' },
 
@@ -541,10 +611,4 @@ function makeStyles(p: Palette) {
     saveBtn: { backgroundColor: p.editBtnBg, borderColor: p.editBtnBg },
     modalBtnTxt: { color: p.text, fontWeight: '600' },
   });
-}
-
-function colorMix(bg: string, fg: string, alpha = 0.1) {
-  const a = Math.max(0, Math.min(1, alpha));
-  const hexAlpha = Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase();
-  return `${fg}${hexAlpha}`;
 }
