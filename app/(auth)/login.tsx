@@ -195,7 +195,7 @@ export default function LoginScreen() {
               />
             ) : (
               <Image
-                source={require('../../assets/images/math-logo.png')}
+                source={require('../../assets/images/icon_math_resized.png')}
                 onError={() => setUseLogoFallback(true)}
                 style={{ width: 72, height: 120, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }}
               />
