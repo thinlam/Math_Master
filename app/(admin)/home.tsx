@@ -340,6 +340,7 @@ export default function AdminHome() {
                 {/* NEW: Quản lý gói */}
                 <QuickAction icon="star-outline" label="Quản lý gói" onPress={() => go(router, 'subscriptions')} />
                 <QuickAction icon = "time" label= "Quick " onPress={() => router.push('/(admin)/quick')} />
+                <QuickAction icon = "speedometer" label= "Speed" onPress={() =>  go(router, 'speed')} />
               </View>
             </View>
 
@@ -396,7 +397,7 @@ export default function AdminHome() {
 /* ---------- Sub Components ---------- */
 function go(
   router: ReturnType<typeof useRouter>,
-  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config' | 'library' | 'subscriptions'
+  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config' | 'library' | 'subscriptions'|'speed'
 ) {
   switch (dest) {
     case 'users': router.push('../users'); break;
@@ -407,7 +408,8 @@ function go(
     case 'settings': router.push('/(admin)/settings'); break;
     case 'admin-config': router.push('/(admin)/admin-config'); break;
     case 'library': router.push('/(admin)/library'); break;
-    case 'subscriptions': router.push('/(admin)/subscriptions'); break; // <-- NEW
+    case 'subscriptions': router.push('/(admin)/subscriptions'); break;
+    case 'speed' : router.push('../speed'); break; // <-- NEW
   }
 }
 

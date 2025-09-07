@@ -4,17 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Modal,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+  ActivityIndicator, Alert, Image, Modal, RefreshControl, ScrollView,
+  StatusBar, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -22,12 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
-  collection,
-  doc, getDoc,
-  limit,
-  onSnapshot, orderBy, query,
-  Timestamp,
-  updateDoc,
+  collection, doc, getDoc, limit, onSnapshot, orderBy, query,
+  runTransaction, serverTimestamp,
+  Timestamp, updateDoc,
 } from 'firebase/firestore';
 
 /* i18n (rút gọn) */
@@ -59,23 +47,16 @@ const I18N = {
     noBadges: 'Chưa có huy hiệu nào.',
   },
 } as const;
-
 type Lang = 'vi';
 const LANG: Lang = 'vi';
 function t(key: keyof typeof I18N['vi']) { return I18N[LANG][key]; }
 
+/* Types */
 type BadgeItem = { id: string; title: string; icon: string; unlockedAt?: Timestamp | null };
 type UserProfile = {
-  uid: string;
-  name: string;
-  email: string;
-  level: string | null;
-  points: number;
-  badges: BadgeItem[]; // (không dùng để đếm nữa, nhưng giữ type cho tương thích)
-  streak: number;
-  photoURL?: string | null;
-  coins: number;
-  role?: 'user' | 'premium' | 'admin';
+  uid: string; name: string; email: string; level: string | null;
+  points: number; badges: BadgeItem[]; streak: number;
+  photoURL?: string | null; coins: number; role?: 'user' | 'premium' | 'admin';
 };
 
 const CLASS_OPTIONS = [
@@ -84,14 +65,58 @@ const CLASS_OPTIONS = [
   'Lớp 10','Lớp 11','Lớp 12-THPTQG',
 ];
 
-function classToGradeNumber(levelStr: string): number | null {
-  const m = levelStr.match(/\d+/); if (!m) return null;
-  const n = Number(m[0]); return n >= 1 && n <= 12 ? n : null;
-}
 function colorMix(bg: string, fg: string, alpha = 0.1) {
   const a = Math.max(0, Math.min(1, alpha));
   const hexAlpha = Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase();
   return `${fg}${hexAlpha}`;
+}
+
+/* ===== Helpers cho streak theo múi giờ VN ===== */
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+function localDayString(tz = VN_TZ, d = new Date()) {
+  const parts = new Intl.DateTimeFormat('vi-VN', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  const dd = parts.find(p => p.type === 'day')?.value ?? '01';
+  const mm = parts.find(p => p.type === 'month')?.value ?? '01';
+  const yyyy = parts.find(p => p.type === 'year')?.value ?? '1970';
+  return `${yyyy}-${mm}-${dd}`;
+}
+function diffDaysLocal(aYYYYMMDD: string, bYYYYMMDD: string) {
+  const [ay, am, ad] = aYYYYMMDD.split('-').map(Number);
+  const [by, bm, bd] = bYYYYMMDD.split('-').map(Number);
+  const a = Date.UTC(ay, am - 1, ad);
+  const b = Date.UTC(by, bm - 1, bd);
+  return Math.round((b - a) / 86400000);
+}
+/** Cập nhật chuỗi ngày an toàn (merge để không lỗi khi field chưa tồn tại) */
+async function ensureDailyStreak(uid: string) {
+  const userRef = doc(db, 'users', uid);
+  const today = localDayString(VN_TZ);
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(userRef);
+    const data = snap.exists() ? (snap.data() as any) : {};
+
+    let streak = Number(data?.streak ?? 0);
+    const last: string | undefined = data?.lastActiveLocalDay;
+
+    if (last === today) return; // đã tính cho hôm nay
+
+    if (!last) {
+      streak = Math.max(1, streak || 0) || 1;
+    } else {
+      const d = diffDaysLocal(last, today);
+      if (d === 1) streak = (streak || 0) + 1;
+      else if (d > 1) streak = 1;
+    }
+
+    tx.set(userRef, {
+      streak,
+      lastActiveLocalDay: today,
+      lastActiveAt: serverTimestamp(),
+    }, { merge: true });
+  });
 }
 
 /* ====== THÔNG BÁO ====== */
@@ -145,7 +170,7 @@ export default function HomeScreen() {
           level: data.level ?? null,
           points: typeof data.points === 'number' ? data.points : 0,
           streak: typeof data.streak === 'number' ? data.streak : 0,
-          badges: [], // không dùng field cũ nữa
+          badges: [],
           coins: typeof data.coins === 'number' ? data.coins : 0,
           role: (data.role as 'user' | 'premium' | 'admin') ?? 'user',
         };
@@ -155,9 +180,15 @@ export default function HomeScreen() {
     }, []
   );
 
-  useEffect(() => { if (firebaseUser) fetchProfile(firebaseUser); }, [firebaseUser, fetchProfile]);
+  // Lần vào Home: cập nhật streak rồi refetch để đồng bộ UI
+  useEffect(() => {
+    if (!firebaseUser) return;
+    ensureDailyStreak(firebaseUser.uid)
+      .then(() => fetchProfile(firebaseUser))
+      .catch(console.error);
+  }, [firebaseUser, fetchProfile]);
 
-  /* === Subscribe badges đúng chỗ: users/{uid}/badges === */
+  /* === Subscribe badges: users/{uid}/badges === */
   useEffect(() => {
     if (!firebaseUser) return;
     const uid = firebaseUser.uid;
@@ -167,8 +198,7 @@ export default function HomeScreen() {
       const list: BadgeItem[] = [];
       qs.forEach((d) => {
         const data = d.data() as any;
-        const completed = !!data?.completed;
-        if (completed) {
+        if (data?.completed) {
           count++;
           list.push({
             id: d.id,
@@ -178,13 +208,11 @@ export default function HomeScreen() {
           });
         }
       });
-
       list.sort((a, b) => {
         const ta = (a.unlockedAt as any)?.seconds ?? 0;
         const tb = (b.unlockedAt as any)?.seconds ?? 0;
         return tb - ta;
       });
-
       setBadgeCount(count);
       setLatestBadges(list.slice(0, 8));
     });
@@ -195,8 +223,12 @@ export default function HomeScreen() {
   const onRefresh = useCallback(async () => {
     if (!firebaseUser) return;
     setRefreshing(true);
-    await fetchProfile(firebaseUser);
-    setRefreshing(false);
+    try {
+      await ensureDailyStreak(firebaseUser.uid);
+      await fetchProfile(firebaseUser);
+    } finally {
+      setRefreshing(false);
+    }
   }, [firebaseUser, fetchProfile]);
 
   const initials = useMemo(() => {
@@ -207,8 +239,6 @@ export default function HomeScreen() {
   }, [user?.name]);
 
   const openClassModal = () => setClassModalVisible(true);
-  const closeClassModal = () => setClassModalVisible(false);
-
   const saveClass = async () => {
     if (!firebaseUser) return;
     if (!selectedClass) { Alert.alert(t('chooseClass'), t('noClass')); return; }
@@ -217,9 +247,8 @@ export default function HomeScreen() {
       await updateDoc(doc(db, 'users', firebaseUser.uid), { level: selectedClass });
       setUser((prev) => (prev ? { ...prev, level: selectedClass } : prev));
       const m = selectedClass.match(/\d+/); if (m) await AsyncStorage.setItem('selectedGrade', String(Number(m[0])));
-      closeClassModal(); router.push('/');
     } catch (e) { console.error(e); Alert.alert('Lỗi', 'Không thể lưu lớp. Vui lòng thử lại.'); }
-    finally { setSavingClass(false); }
+    finally { setSavingClass(false); setClassModalVisible(false); }
   };
 
   const handleStartLearning = useCallback(async () => {
@@ -230,8 +259,6 @@ export default function HomeScreen() {
   }, [router, user?.level, selectedClass]);
 
   /* ====== SUBSCRIBE THÔNG BÁO ====== */
-
-  // doc users/{uid} để lấy lastSeenAnn
   useEffect(() => {
     if (!firebaseUser) return;
     const unsub = onSnapshot(doc(db, 'users', firebaseUser.uid), (d) => {
@@ -241,7 +268,6 @@ export default function HomeScreen() {
     return unsub;
   }, [firebaseUser]);
 
-  // danh sách thông báo (cho modal)
   useEffect(() => {
     const qAll = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(qAll, (snap) => {
@@ -251,19 +277,13 @@ export default function HomeScreen() {
     return unsub;
   }, []);
 
-  // chỉ 1 bản ghi mới nhất để bật banner khi có thông báo mới
   useEffect(() => {
     const q1 = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(1));
     const unsub = onSnapshot(q1, (snap) => {
       const latest = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))[0] as Ann | undefined;
 
       if (!latest) { setInitialAnnLoaded(true); return; }
-
-      // tránh nhảy banner lần đầu mở app
-      if (!initialAnnLoaded) {
-        setInitialAnnLoaded(true);
-        return;
-      }
+      if (!initialAnnLoaded) { setInitialAnnLoaded(true); return; }
 
       const created = (latest.createdAt as any)?.toDate?.() || new Date();
       if (!lastSeenAnn || created > lastSeenAnn) {
@@ -273,7 +293,6 @@ export default function HomeScreen() {
       }
     });
     return unsub;
-
   }, [initialAnnLoaded, lastSeenAnn]);
 
   const unreadCount = useMemo(() => {
@@ -292,11 +311,10 @@ export default function HomeScreen() {
   };
 
   /* ====== UI ====== */
-
   if (!firebaseUser || loading) {
     return (
       <SafeAreaView style={styles.container} edges={['top','left','right']}>
-        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
         <View style={styles.center}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingTxt}>{t('loading')}</Text>
@@ -307,7 +325,7 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top','left','right']}>
-      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} translucent={false} />
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
 
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -317,7 +335,6 @@ export default function HomeScreen() {
       >
         {/* Header */}
         <View style={[styles.headerCard, { position: 'relative' }]}>
-          {/* Nút chuông thông báo */}
           <TouchableOpacity
             onPress={openAnnModal}
             style={{ position: 'absolute', right: 10, top: 10, padding: 6 }}
@@ -325,13 +342,8 @@ export default function HomeScreen() {
           >
             <Ionicons name="notifications-outline" size={22} color={palette.text} />
             {unreadCount > 0 && (
-              <View
-                style={{
-                  position: 'absolute', right: 2, top: 2,
-                  minWidth: 16, height: 16, borderRadius: 8,
-                  backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
-                }}
-              >
+              <View style={{ position: 'absolute', right: 2, top: 2, minWidth: 16, height: 16, borderRadius: 8,
+                backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
                 <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </Text>
@@ -343,15 +355,15 @@ export default function HomeScreen() {
             {user?.photoURL ? (
               <Image source={{ uri: user.photoURL }} style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }} resizeMode="cover" />
             ) : (
-              <View style={styles.avatar}><Text style={styles.avatarTxt}>{initials}</Text></View>
+              <View style={styles.avatar}><Text style={styles.avatarTxt}>{(user?.name?.[0] || 'U').toUpperCase()}</Text></View>
             )}
 
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
                 <Text style={styles.hello}>{t('hello')}, {user?.name || 'User'}</Text>
-
                 {user?.role === 'premium' && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#7C3AED', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#7C3AED',
+                    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 6 }}>
                     <Ionicons name="star" size={14} color="#FFF" />
                     <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>Premium</Text>
                   </View>
@@ -376,37 +388,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Banner thông báo mới */}
-        {bannerAnn && (
-          <TouchableOpacity
-            onPress={openAnnModal}
-            activeOpacity={0.9}
-            style={{
-              backgroundColor: colorMix(palette.bg, '#3B82F6', 0.18),
-              borderColor: colorMix(palette.bg, '#60A5FA', 0.45),
-              borderWidth: 1,
-              borderRadius: 12,
-              padding: 12,
-              marginTop: 8,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Ionicons name="notifications" size={18} color="#60A5FA" />
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: palette.text, fontWeight: '800' }} numberOfLines={1}>
-                  {bannerAnn.title}
-                </Text>
-                {!!bannerAnn.body && (
-                  <Text style={{ color: palette.textMuted }} numberOfLines={2}>
-                    {bannerAnn.body}
-                  </Text>
-                )}
-              </View>
-              <Text style={{ color: palette.textMuted, fontSize: 12 }}>Xem</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
         {/* Quick Actions */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('quickActions')}</Text>
@@ -427,7 +408,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Huy hiệu gần đây (tuỳ chọn) */}
+        {/* Huy hiệu gần đây */}
         <View style={styles.card}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={styles.cardTitle}>{t('earnedBadges')}</Text>
@@ -435,18 +416,12 @@ export default function HomeScreen() {
               <Text style={{ color: palette.link, fontWeight: '700' }}>{t('viewAll')}</Text>
             </TouchableOpacity>
           </View>
-
           {latestBadges.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
               {latestBadges.map((b) => (
-                <View
-                  key={b.id}
-                  style={{
-                    width: 110, height: 80, borderRadius: 12,
-                    borderWidth: 1, borderColor: palette.cardBorder,
-                    backgroundColor: palette.bg, padding: 10, justifyContent: 'center', gap: 6
-                  }}
-                >
+                <View key={b.id} style={{
+                  width: 110, height: 80, borderRadius: 12, borderWidth: 1, borderColor: palette.cardBorder,
+                  backgroundColor: palette.bg, padding: 10, justifyContent: 'center', gap: 6 }}>
                   <MaterialCommunityIcons name={b.icon as any} size={22} color={palette.mciGold} />
                   <Text style={{ color: palette.textFaint, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{b.title}</Text>
                 </View>
@@ -490,12 +465,7 @@ export default function HomeScreen() {
       </Modal>
 
       {/* Modal thông báo */}
-      <Modal
-        visible={annModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setAnnModalVisible(false)}
-      >
+      <Modal visible={annModalVisible} transparent animationType="fade" onRequestClose={() => setAnnModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { maxHeight: '78%' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -514,17 +484,9 @@ export default function HomeScreen() {
                 annList.map((a) => {
                   const d = (a.createdAt as any)?.toDate?.() || new Date();
                   return (
-                    <View
-                      key={a.id}
-                      style={{
-                        backgroundColor: palette.card,
-                        borderColor: palette.cardBorder,
-                        borderWidth: 1,
-                        borderRadius: 12,
-                        padding: 12,
-                        marginBottom: 10,
-                      }}
-                    >
+                    <View key={a.id} style={{
+                      backgroundColor: palette.card, borderColor: palette.cardBorder, borderWidth: 1,
+                      borderRadius: 12, padding: 12, marginBottom: 10 }}>
                       <Text style={{ color: palette.text, fontWeight: '800' }}>{a.title}</Text>
                       {!!a.body && <Text style={{ color: palette.textMuted, marginTop: 6 }}>{a.body}</Text>}
                       <Text style={{ color: palette.textMuted, fontSize: 12, marginTop: 6 }}>

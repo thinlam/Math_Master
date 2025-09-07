@@ -116,6 +116,10 @@ export default function TabLayout() {
         name="Profile/Badges"
         options={{ href: null }}  
       />
+      <Tabs.Screen
+        name = "Practice/Speed"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }
