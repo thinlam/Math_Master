@@ -2,16 +2,16 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    Platform,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -21,18 +21,18 @@ import { useTheme } from '@/theme/ThemeProvider';
 /* Firebase */
 import { db } from '@/scripts/firebase';
 import {
-    addDoc,
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    limit,
-    orderBy,
-    query,
-    serverTimestamp,
-    startAfter,
-    updateDoc,
-    where,
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  startAfter,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 
 /* ---------- Types ---------- */
@@ -73,6 +73,8 @@ const TAG_OPTIONS = [
   'tổ hợp',
 ];
 
+const isAndroid = Platform.OS === 'android';
+
 /* ---------- Small UI helpers (đồng bộ màu – tránh chữ đen) ---------- */
 function Txt({ style, ...rest }: React.ComponentProps<typeof Text>) {
   const { palette } = useTheme();
@@ -83,7 +85,7 @@ function TxtDim({ style, ...rest }: React.ComponentProps<typeof Text>) {
   return <Text {...rest} style={[{ color: palette.textDim }, style]} />;
 }
 
-/* Common Button */
+/* Common Button (đã bỏ shadow Android để không có “ô đen”) */
 function Button({
   label,
   onPress,
@@ -96,18 +98,18 @@ function Button({
   disabled?: boolean;
 }) {
   const { palette } = useTheme();
-  const colors: Record<string, { bg: string; fg: string; border?: string }> = {
-    primary: { bg: palette.primary, fg: '#fff' },
-    success: { bg: palette.success, fg: '#fff' },
-    danger: { bg: palette.danger, fg: '#fff' },
-    warn: { bg: palette.warn, fg: '#111' },
-    muted: { bg: 'rgba(255,255,255,0.08)', fg: palette.text, border: 'rgba(255,255,255,0.15)' },
+  const colors: Record<string, { bg: string; fg: string; border: string }> = {
+    primary: { bg: palette.primary, fg: '#fff', border: 'rgba(247, 222, 4, 0.12)' },
+    success: { bg: palette.success, fg: '#fff', border: 'rgba(53, 250, 4, 0.99)' },
+    danger:  { bg: palette.danger,  fg: '#fff', border: 'rgba(51, 255, 0, 1)' },
+    muted:   { bg: 'rgba(255,255,255,0.06)', fg: palette.text, border: 'rgba(255, 255, 255, 1)' },
+    warn:    { bg: palette.warn,    fg: '#fff6f6ff', border: 'rgba(217, 255, 0, 1)' },
   };
   const c = colors[tone];
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={0.85}
+      activeOpacity={0.9}
       disabled={disabled}
       style={{
         backgroundColor: c.bg,
@@ -115,13 +117,14 @@ function Button({
         paddingVertical: 10,
         paddingHorizontal: 14,
         opacity: disabled ? 0.6 : 1,
-        borderWidth: c.border ? 1 : 0,
+        borderWidth: 1,
         borderColor: c.border,
+        // Shadow: chỉ iOS để tránh quầng đen Android
         shadowColor: '#000',
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 3,
+        shadowOpacity: isAndroid ? 0 : 0.12,
+        shadowRadius: isAndroid ? 0 : 8,
+        shadowOffset: { width: 0, height: isAndroid ? 0 : 3 },
+        elevation: isAndroid ? 0 : 2,
       }}
     >
       <Text style={{ color: c.fg, fontWeight: '700' }}>{label}</Text>
@@ -129,7 +132,7 @@ function Button({
   );
 }
 
-/* Segmented Chip */
+/* Segmented Chip (bo tròn, padding đều) */
 function Chip({
   label,
   selected,
@@ -142,19 +145,21 @@ function Chip({
   size?: 'sm' | 'md';
 }) {
   const { palette } = useTheme();
-  const padV = size === 'sm' ? 6 : 8;
-  const padH = size === 'sm' ? 10 : 12;
+  const padV = size === 'sm' ? 8 : 10;
+  const padH = size === 'sm' ? 12 : 14;
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={0.85}
+      activeOpacity={0.9}
       style={{
         paddingVertical: padV,
         paddingHorizontal: padH,
-        borderRadius: 10,
+        borderRadius: 999,
         backgroundColor: selected ? palette.primary : 'rgba(255,255,255,0.06)',
         borderWidth: 1,
-        borderColor: selected ? palette.primary : 'rgba(255,255,255,0.16)',
+        borderColor: selected ? palette.primary : 'rgba(255,255,255,0.18)',
+        minHeight: 36,
+        justifyContent: 'center',
       }}
     >
       <Text style={{ color: selected ? '#fff' : palette.text, fontWeight: '700' }}>{label}</Text>
@@ -184,7 +189,7 @@ function Field({
         {
           backgroundColor: 'rgba(255,255,255,0.04)',
           borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.16)',
+          borderColor: 'rgba(255,255,255,0.10)',
           borderRadius: 12,
           color: palette.text,
           paddingHorizontal: 12,
@@ -196,7 +201,7 @@ function Field({
   );
 }
 
-/* Card */
+/* Card (bỏ elevation Android) */
 function Card({ children, style }: { children: React.ReactNode; style?: any }) {
   const { palette } = useTheme();
   return (
@@ -206,13 +211,14 @@ function Card({ children, style }: { children: React.ReactNode; style?: any }) {
           backgroundColor: palette.card,
           borderRadius: 14,
           borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.14)',
-          padding: 12,
+          borderColor: 'rgba(255,255,255,0.12)',
+          padding: 14,
+          // Chỉ đổ bóng trên iOS
           shadowColor: '#000',
-          shadowOpacity: 0.15,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 2,
+          shadowOpacity: isAndroid ? 0 : 0.10,
+          shadowRadius: isAndroid ? 0 : 10,
+          shadowOffset: { width: 0, height: isAndroid ? 0 : 4 },
+          elevation: isAndroid ? 0 : 2,
         },
         style,
       ]}
@@ -425,6 +431,60 @@ export default function AdminSpeedBank() {
     }
   };
 
+  /* ---------- Filters header (cuộn ngang) ---------- */
+  const FiltersHeader = (
+    <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 12 }}>
+      {/* Tag search */}
+      <Field
+        value={tagFilter}
+        onChangeText={setTagFilter}
+        placeholder="Lọc theo tag (vd: giải tích, hình học...)"
+        onSubmitEditing={loadFirst}
+        style={{ marginBottom: 10 }}
+      />
+
+      {/* Quick tag suggestions */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+        {TAG_OPTIONS.map((t) => (
+          <Chip
+            key={t}
+            size="sm"
+            label={t}
+            selected={tagFilter.toLowerCase() === t.toLowerCase()}
+            onPress={() => {
+              setTagFilter(t);
+              loadFirst();
+            }}
+          />
+        ))}
+      </ScrollView>
+
+      {/* Grades */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
+        {GRADES.map((g) => (
+          <Chip key={g} label={`Lớp ${g}`} selected={g === grade} onPress={() => setGrade(g)} />
+        ))}
+      </ScrollView>
+
+      {/* Difficulty */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 8, marginTop: 10, alignItems: 'center' }}
+      >
+        {(['all', 'easy', 'medium', 'hard'] as const).map((d) => (
+          <Chip
+            key={d}
+            size="sm"
+            label={d === 'all' ? 'Tất cả' : d}
+            selected={difficultyFilter === d}
+            onPress={() => setDifficultyFilter(d as any)}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  );
+
   /* ---------- UI ---------- */
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: palette.bg, paddingTop: Platform.OS === 'android' ? insets.top : 0 }}>
@@ -444,33 +504,6 @@ export default function AdminSpeedBank() {
         </View>
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <Button label="Nhập nhanh" tone="warn" onPress={() => setShowBulk(true)} />
-          <Button label="Thêm" tone="primary" onPress={openCreate} />
-        </View>
-      </View>
-
-      {/* Filters */}
-      <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
-        {/* Tag filter moved ABOVE grades */}
-        <Field
-          value={tagFilter}
-          onChangeText={setTagFilter}
-          placeholder="Lọc theo tag (vd: giải tích, hình học...)"
-          onSubmitEditing={loadFirst}
-          style={{ marginBottom: 10 }}
-        />
-
-        {/* Grades */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {GRADES.map((g) => (
-            <Chip key={g} label={`Lớp ${g}`} selected={g === grade} onPress={() => setGrade(g)} />
-          ))}
-        </View>
-
-        {/* Difficulty */}
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, alignItems: 'center' }}>
-          {(['all', 'easy', 'medium', 'hard'] as const).map((d) => (
-            <Chip key={d} size="sm" label={d === 'all' ? 'Tất cả' : d} selected={difficultyFilter === d} onPress={() => setDifficultyFilter(d as any)} />
-          ))}
         </View>
       </View>
 
@@ -483,7 +516,9 @@ export default function AdminSpeedBank() {
         <FlatList
           data={items}
           keyExtractor={(it) => it.id}
-          contentContainerStyle={{ padding: 12, paddingBottom: 40 + insets.bottom }}
+          ListHeaderComponent={FiltersHeader}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ padding: 12, paddingBottom: 80 + insets.bottom }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           onEndReachedThreshold={0.3}
           onEndReached={loadMore}
@@ -498,13 +533,17 @@ export default function AdminSpeedBank() {
               </View>
 
               {item.qType === 'mcq' ? (
-                <TxtDim style={{ marginTop: 6 }}>Đáp án đúng: {item.choices?.[item.correctIndex ?? 0]}</TxtDim>
+                <TxtDim style={{ marginTop: 6 }}>
+                  Đáp án đúng: <Txt style={{ fontWeight: '800' }}>{item.choices?.[item.correctIndex ?? 0]}</Txt>
+                </TxtDim>
               ) : (
-                <TxtDim style={{ marginTop: 6 }}>Đáp án: {String(item.answer)}</TxtDim>
+                <TxtDim style={{ marginTop: 6 }}>
+                  Đáp án: <Txt style={{ fontWeight: '800' }}>{String(item.answer)}</Txt>
+                </TxtDim>
               )}
 
               <TxtDim style={{ marginTop: 4, fontSize: 12 }}>
-                Lớp {item.grade} • {item.difficulty ?? 'easy'}
+                Lớp {item.grade} • {(item.difficulty ?? 'easy').toUpperCase()}
                 {item.tags?.length ? ` • ${item.tags.join(', ')}` : ''}
                 {item.timeMs ? ` • ${Math.round((item.timeMs as any) / 1000)}s` : ''}
               </TxtDim>
@@ -513,14 +552,47 @@ export default function AdminSpeedBank() {
             </Card>
           )}
           ListEmptyComponent={
-            <View style={{ padding: 24, alignItems: 'center', gap: 8 }}>
-              <MaterialCommunityIcons name="file-question-outline" size={26} color={palette.textDim} />
+            <View style={{ paddingVertical: 36, alignItems: 'center', gap: 8 }}>
+              <MaterialCommunityIcons name="file-question-outline" size={28} color={palette.textDim} />
               <TxtDim>Chưa có câu nào cho lớp {grade}.</TxtDim>
+              <Button label="+ Thêm câu đầu tiên" tone="success" onPress={openCreate} />
             </View>
           }
           ListFooterComponent={moreLoading ? <ActivityIndicator color={palette.primary} /> : null}
         />
       )}
+
+      {/* FAB (không shadow Android, dùng ring mảnh) */}
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          right: 16,
+          bottom: 16 + insets.bottom,
+        }}
+      >
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={openCreate}
+          style={{
+            backgroundColor: palette.primary,
+            height: 56,
+            width: 56,
+            borderRadius: 28,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.22)',
+            shadowColor: '#000',
+            shadowOpacity: isAndroid ? 0 : 0.18,
+            shadowRadius: isAndroid ? 0 : 8,
+            shadowOffset: { width: 0, height: isAndroid ? 0 : 4 },
+            elevation: isAndroid ? 0 : 4,
+          }}
+        >
+          <MaterialCommunityIcons name="plus" size={26} color="#fff" />
+        </TouchableOpacity>
+      </View>
 
       {/* Add/Edit Modal */}
       <Modal visible={showEdit} animationType="slide" transparent onRequestClose={() => setShowEdit(false)}>
@@ -640,7 +712,7 @@ export default function AdminSpeedBank() {
                 ))}
               </View>
 
-              {/* Time field placed on its own line */}
+              {/* Time field */}
               <TxtDim style={{ marginTop: 10 }}>Thời gian gợi ý (ms)</TxtDim>
               <Field
                 value={String(editing?.timeMs ?? 10000)}
@@ -650,7 +722,7 @@ export default function AdminSpeedBank() {
                 style={{ marginTop: 6 }}
               />
 
-              {/* TAGS as chips */}
+              {/* TAGS */}
               <FormLabel style={{ marginTop: 12 }}>Tags</FormLabel>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {TAG_OPTIONS.map((t) => {
