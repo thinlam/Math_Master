@@ -19,15 +19,21 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+/* Firebase core + Firestore */
 import { auth, db } from '@/scripts/firebase';
+import { FirebaseError } from 'firebase/app';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import {
   collection,
   doc,
   getDoc,
-  onSnapshot
+  onSnapshot,
+  runTransaction,
+  serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
 
+/* Theme */
 import { useTheme, type Palette } from '@/theme/ThemeProvider';
 
 /* ---------------- I18N ---------------- */
@@ -93,7 +99,9 @@ const SETTINGS_KEYS = {
   notifStudy: 'profile_notif_study',
   notifMarketing: 'profile_notif_marketing',
 };
-function t(lang: Lang, key: keyof typeof I18N['vi']) { return I18N[lang][key]; }
+function t(lang: Lang, key: keyof typeof I18N['vi']) {
+  return I18N[lang][key];
+}
 
 /* ---------------- Types ---------------- */
 type BadgeItem = { id: string; title: string; icon: string };
@@ -124,6 +132,125 @@ function makeStyles(p: Palette) {
     logoutTxt: { color: '#fff', fontWeight: '700' },
     link: { color: p.link, fontSize: 13, fontWeight: '600' },
   });
+}
+
+/* ========= Helpers tính streak theo mốc ngày UTC ========= */
+
+/** Trả về 00:00:00 (UTC) của ngày chứa d */
+function startOfUTCDay(d: Date) {
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Số ngày lệch theo lịch (UTC) giữa a -> b */
+function diffDaysUTC(a: Date, b: Date) {
+  const A = startOfUTCDay(a);
+  const B = startOfUTCDay(b);
+  return Math.floor((B - A) / 86400000);
+}
+
+/* ========= Transaction cập nhật streak =========
+   Quy tắc:
+   - gap = 0: đã ghi nhận hôm nay → không +1
+   - gap = 1: liền ngày → streak +1
+   - gap >= 2: bỏ từ 2 ngày → reset = 1
+   Luôn cập nhật lastLoginAt = serverTimestamp() (giờ server).
+*/
+async function updateStreakOnLogin(uid: string) {
+  const ref = doc(db, 'users', uid);
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const now = new Date();
+
+    if (!snap.exists()) {
+      // Tạo mới doc nếu chưa có
+      tx.set(ref, {
+        streak_days: 1,
+        lastLoginAt: serverTimestamp(),
+        _touchedAt: serverTimestamp(), // No-Op để luôn có updateMask
+      }, { merge: true });
+      return;
+    }
+
+    const data = snap.data() as any;
+    const prevStreak = typeof data.streak_days === 'number' ? data.streak_days : 0;
+    const lastTs: Timestamp | null = data.lastLoginAt ?? null;
+
+    if (!lastTs) {
+      // Chưa từng lưu lastLoginAt → bắt đầu đếm
+      tx.update(ref, {
+        streak_days: Math.max(1, prevStreak || 1),
+        lastLoginAt: serverTimestamp(),
+        _touchedAt: serverTimestamp(),
+      });
+      return;
+    }
+
+    const lastDate = lastTs.toDate();
+    const gap = diffDaysUTC(lastDate, now); // 0, 1, 2+
+
+    if (gap <= 0) {
+      // Cùng ngày → chỉ chạm doc để sinh updateTime (tránh transform-only)
+      tx.set(ref, { _touchedAt: serverTimestamp(), lastLoginAt: serverTimestamp() }, { merge: true });
+    } else if (gap === 1) {
+      // Liền ngày → tăng streak
+      tx.update(ref, {
+        streak_days: (prevStreak || 0) + 1,
+        lastLoginAt: serverTimestamp(),
+        _touchedAt: serverTimestamp(),
+      });
+    } else {
+      // Bỏ 2+ ngày → reset về 1
+      tx.update(ref, {
+        streak_days: 1,
+        lastLoginAt: serverTimestamp(),
+        _touchedAt: serverTimestamp(),
+      });
+    }
+  });
+}
+
+/* ========= Retry wrapper để nuốt xung đột failed-precondition ========= */
+async function updateStreakOnLoginWithRetry(uid: string) {
+  const maxAttempts = 3;
+  let attempt = 0;
+
+   
+  while (true) {
+    try {
+      await updateStreakOnLogin(uid);
+      return;
+    } catch (e: any) {
+      const code =
+        e instanceof FirebaseError ? e.code : e?.code;
+      const isFailedPrecondition = code === 'failed-precondition';
+      attempt++;
+
+      if (!isFailedPrecondition || attempt >= maxAttempts) {
+        throw e;
+      }
+
+      // Jitter backoff 80–220ms
+      const wait = 80 + Math.floor(Math.random() * 140);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+/* ========= Gate chống gọi trùng (debounce + mutex) ========= */
+const streakGateRef = { inFlight: false, lastRun: 0 };
+
+async function safeUpdateStreak(uid: string) {
+  // Không chạy nếu đang chạy hoặc mới chạy trong 5s gần nhất
+  if (streakGateRef.inFlight || Date.now() - streakGateRef.lastRun < 5000) return;
+
+  streakGateRef.inFlight = true;
+  try {
+    await updateStreakOnLoginWithRetry(uid);
+    streakGateRef.lastRun = Date.now();
+  } finally {
+    streakGateRef.inFlight = false;
+  }
 }
 
 /* ---------------- Screen ---------------- */
@@ -212,7 +339,6 @@ export default function ProfileScreen() {
     if (!firebaseUser) return;
     const uid = firebaseUser.uid;
 
-    // user doc: cập nhật streak, points, level theo thời gian thực
     const unsubUser = onSnapshot(doc(db, 'users', uid), (snap) => {
       const d = snap.data() || {};
       setUser((prev) => prev ? {
@@ -229,7 +355,6 @@ export default function ProfileScreen() {
       } : null);
     });
 
-    // badges: đếm completed + lấy 3 mới nhất
     const colRef = collection(db, 'users', uid, 'badges');
     const unsubBadges = onSnapshot(colRef, (qs) => {
       let count = 0;
@@ -239,11 +364,10 @@ export default function ProfileScreen() {
         if (data?.completed) count++;
         list.push({ id: d.id, title: data?.title, icon: data?.icon, unlockedAt: data?.unlockedAt });
       });
-      // sort desc by unlockedAt
       list.sort((a, b) => ((b.unlockedAt?.seconds ?? 0) - (a.unlockedAt?.seconds ?? 0)));
       setBadgeCount(count);
       const mapped: BadgeItem[] = list
-        .filter((x) => !!x.title || !!x.icon) // nếu có meta
+        .filter((x) => !!x.title || !!x.icon)
         .slice(0, 3)
         .map((x) => ({ id: x.id, title: x.title ?? x.id, icon: x.icon ?? 'medal-outline' }));
       setLatestBadges(mapped);
@@ -251,6 +375,17 @@ export default function ProfileScreen() {
 
     return () => { unsubUser(); unsubBadges(); };
   }, [firebaseUser]);
+
+  /* ---- GỌI cập nhật streak an toàn (gate + retry) ---- */
+  useEffect(() => {
+    if (firebaseUser) safeUpdateStreak(firebaseUser.uid).catch(console.error);
+  }, [firebaseUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (firebaseUser) safeUpdateStreak(firebaseUser.uid).catch(console.error);
+    }, [firebaseUser])
+  );
 
   /* ---- helpers ---- */
   const initials = useMemo(() => {
