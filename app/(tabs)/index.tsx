@@ -4,10 +4,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, Modal, RefreshControl, ScrollView,
+  ActivityIndicator, Alert,
+  Animated, Easing,
+  Image, Modal,
+  Platform,
+  RefreshControl, ScrollView,
   StatusBar, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+/* Rainbow text deps */
+import MaskedView from '@react-native-masked-view/masked-view';
+import { LinearGradient } from 'expo-linear-gradient';
 
 /* Firebase */
 import { auth, db } from '@/scripts/firebase';
@@ -15,7 +23,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   collection, doc, getDoc, limit, onSnapshot, orderBy, query,
   runTransaction, serverTimestamp,
-  Timestamp, updateDoc,
+  Timestamp, updateDoc, where,
 } from 'firebase/firestore';
 
 /* i18n (rút gọn) */
@@ -122,6 +130,49 @@ async function ensureDailyStreak(uid: string) {
 /* ====== THÔNG BÁO ====== */
 type Ann = { id: string; title: string; body?: string | null; createdAt?: Timestamp | null };
 
+/* ---------- RainbowTextAnimated (Animated gradient + fallback web) ---------- */
+function RainbowTextAnimated({ children, style }: { children: string; style?: any }) {
+  // Dịch trái/phải vô hạn (qua lại êm)
+  const t = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    const loop = () => {
+      Animated.sequence([
+        Animated.timing(t, { toValue: 1, duration: 3500, easing: Easing.linear, useNativeDriver: true }),
+        Animated.timing(t, { toValue: 0, duration: 3500, easing: Easing.linear, useNativeDriver: true }),
+      ]).start(() => loop());
+    };
+    loop();
+  }, [t]);
+
+  const translate = t.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-200, 200], // độ dài trượt; có thể tăng/giảm tùy fontSize
+  });
+
+  if (Platform.OS === 'web') {
+    // Fallback Web: màu vàng + shadow (đỡ bị trống)
+    return (
+      <Text style={[style, { color: '#FACC15', textShadowColor: '#0003', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }]}>
+        {children}
+      </Text>
+    );
+  }
+
+  return (
+    <MaskedView maskElement={<Text style={[style, { backgroundColor: 'transparent' }]}>{children}</Text>}>
+      <Animated.View style={{ transform: [{ translateX: translate }] }}>
+        <LinearGradient
+          colors={['#FF0000','#FF7F00','#FFFF00','#00FF00','#0000FF','#4B0082','#8B00FF','#FF0000']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+          /* Tấm gradient rộng & cao hơn chữ để chạy mượt */
+          style={{ width: 600, height: 64 }}
+        />
+      </Animated.View>
+    </MaskedView>
+  );
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const { palette, colorScheme } = useTheme();
@@ -143,9 +194,12 @@ export default function HomeScreen() {
   const [lastSeenAnn, setLastSeenAnn] = useState<Date | null>(null);
   const [initialAnnLoaded, setInitialAnnLoaded] = useState(false);
 
-  /* ===== Badges (đếm & list gần đây) ===== */
+  /* ===== Badges ===== */
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadges, setLatestBadges] = useState<BadgeItem[]>([]);
+
+  /* ===== Subscription active flag ===== */
+  const [subActive, setSubActive] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -180,7 +234,7 @@ export default function HomeScreen() {
     }, []
   );
 
-  // Lần vào Home: cập nhật streak rồi refetch để đồng bộ UI
+  // Lần vào Home: cập nhật streak rồi refetch
   useEffect(() => {
     if (!firebaseUser) return;
     ensureDailyStreak(firebaseUser.uid)
@@ -188,11 +242,10 @@ export default function HomeScreen() {
       .catch(console.error);
   }, [firebaseUser, fetchProfile]);
 
-  /* === Subscribe badges: users/{uid}/badges === */
+  /* === Subscribe badges === */
   useEffect(() => {
     if (!firebaseUser) return;
     const uid = firebaseUser.uid;
-
     const unsub = onSnapshot(collection(db, 'users', uid, 'badges'), (qs) => {
       let count = 0;
       const list: BadgeItem[] = [];
@@ -216,8 +269,29 @@ export default function HomeScreen() {
       setBadgeCount(count);
       setLatestBadges(list.slice(0, 8));
     });
-
     return () => unsub();
+  }, [firebaseUser]);
+
+  /* === Subscribe subscription active/trialing === */
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const now = new Date();
+    const colRef = collection(db, 'users', firebaseUser.uid, 'subscriptions');
+    const qActive = query(
+      colRef,
+      where('status', 'in', ['active', 'trialing']),
+      orderBy('createdAt', 'desc'),
+      limit(3)
+    );
+    const unsub = onSnapshot(qActive, (qs) => {
+      let active = false;
+      qs.forEach((d) => {
+        const end = d.data()?.current_period_end?.toDate?.() as Date | undefined;
+        if (!end || end > now) active = true; // còn hạn
+      });
+      setSubActive(active);
+    });
+    return unsub;
   }, [firebaseUser]);
 
   const onRefresh = useCallback(async () => {
@@ -237,6 +311,10 @@ export default function HomeScreen() {
     const b = (parts[1]?.[0] || parts[0]?.[1] || '').toUpperCase();
     return (a + b).slice(0, 2) || 'U';
   }, [user?.name]);
+
+  /* === PREMIUM FLAG & DISPLAY NAME === */
+  const isPremium = (user?.role === 'premium') || subActive;
+  const premiumDisplay = `Super ${(user?.name?.trim() && user?.name) || 'User'}`;
 
   const openClassModal = () => setClassModalVisible(true);
   const saveClass = async () => {
@@ -360,8 +438,18 @@ export default function HomeScreen() {
 
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-                <Text style={styles.hello}>{t('hello')}, {user?.name || 'User'}</Text>
-                {user?.role === 'premium' && (
+                {/* === Premium: Rainbow animated “Super …” | Normal: "Xin chào, Tên" === */}
+                {isPremium ? (
+                  <RainbowTextAnimated style={[styles.hello, styles.helloBolder]}>
+                    {premiumDisplay}
+                  </RainbowTextAnimated>
+                ) : (
+                  <Text style={styles.hello}>
+                    {t('hello')}, {(user?.name?.trim() && user?.name) || 'User'}
+                  </Text>
+                )}
+
+                {isPremium && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#7C3AED',
                     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 6 }}>
                     <Ionicons name="star" size={14} color="#FFF" />
@@ -544,6 +632,7 @@ function makeStyles(p: Palette) {
     avatarTxt: { color: p.brand, fontSize: 20, fontWeight: '700' },
 
     hello: { fontSize: 18, fontWeight: '700', color: p.text },
+    helloBolder: { fontSize: 20, fontWeight: '800', letterSpacing: 0.5 }, // dùng cho Rainbow “Super …”
     levelRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
     levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
     levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },

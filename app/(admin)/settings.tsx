@@ -3,18 +3,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-    Alert,
-    Platform,
-    ScrollView,
-    StatusBar,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  Platform,
+  ScrollView,
+  StatusBar,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { auth, db } from '@/scripts/firebase';
-import { sendPasswordResetEmail } from 'firebase/auth';
+import { signOut as firebaseSignOut, sendPasswordResetEmail } from 'firebase/auth';
+
 import { doc, getDoc } from 'firebase/firestore';
 
 // Nếu bạn có util xoá phiên, import vào (không có thì comment dòng gọi ở dưới)
@@ -83,16 +84,15 @@ export default function AdminAccountSettingsScreen() {
     }
   };
 
-  const signOut = async () => {
-    try {
-      // Xoá phiên app nếu bạn có secure store
-      // await clearSession();
-      await auth.signOut();
-      router.replace('/(auth)/login');
-    } catch (e: any) {
-      Alert.alert('Lỗi', e?.message ?? 'Đăng xuất thất bại.');
-    }
-  };
+ const signOut = async () => {
+  try {
+    // await clearSession();
+    await firebaseSignOut(auth);           // đúng chuẩn modular
+    router.replace('/(auth)/login'); // khớp tên file
+  } catch (e: any) {
+    Alert.alert('Lỗi', e?.message ?? 'Đăng xuất thất bại.');
+  }
+};
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0b1220' }}>
