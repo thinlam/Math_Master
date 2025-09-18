@@ -5,6 +5,7 @@ import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -145,6 +146,22 @@ export default function StoreScreen() {
             </View>
           );
         })}
+        {/* Legal & Manage Subscription */}
+        <View style={{ gap: 8, marginTop: 8 }}>
+          <TouchableOpacity onPress={() => router.push('/(legal)/privacy')}>
+            <Text style={{ color: palette.link }}>Chính sách quyền riêng tư</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/(legal)/terms')}>
+            <Text style={{ color: palette.link }}>Điều khoản sử dụng</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => Linking.openURL(
+            Platform.OS === 'ios'
+              ? 'itms-apps://apps.apple.com/account/subscriptions'
+              : 'https://play.google.com/store/account/subscriptions'
+          )}>
+            <Text style={{ color: palette.link }}>Quản lý đăng ký</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={{ height: 20 }} />
       </ScrollView>

@@ -3,9 +3,7 @@ import { auth, db } from '@/scripts/firebase';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import {
-  signInWithEmailAndPassword
-} from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import React, { useMemo, useState } from 'react';
 import {
@@ -21,11 +19,12 @@ import {
   View,
 } from 'react-native';
 
-/** -------------------------------------------------------
- *  Helper: điều hướng theo role (giống EFB)
- *  -------------------------------------------------------
- */
+/** ------------------ Types ------------------ */
 type AppRole = 'admin' | 'premium' | 'user' | string;
+type FieldErrors = { email?: string; pw?: string; form?: string };
+
+/** ------------------ Helpers ------------------ */
+const isEmail = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
 
 function routeByRole(
   router: ReturnType<typeof useRouter>,
@@ -35,12 +34,26 @@ function routeByRole(
   const r = role ?? 'user';
   if (r === 'admin') return router.replace('/(admin)/home');
   if (r === 'premium') return router.replace('/(tabs)');
-
-  // user: đã setup thì vào tabs, chưa thì vào onboarding
-  if (opts?.startMode || opts?.level !== null) {
-    return router.replace('/(tabs)');
-  }
+  if (opts?.startMode || opts?.level !== null) return router.replace('/(tabs)');
   return router.replace('/(tabs)');
+}
+
+/** Map mã lỗi Firebase Auth -> thông điệp + field gắn lỗi */
+function mapAuthErrorToField(code?: string): FieldErrors {
+  switch (code) {
+    case 'auth/invalid-email':
+      return { email: 'Email không hợp lệ.' };
+    case 'auth/user-not-found':
+      return { email: 'Không tìm thấy tài khoản với email này.' };
+    case 'auth/wrong-password':
+      return { pw: 'Mật khẩu không đúng.' };
+    case 'auth/too-many-requests':
+      return { form: 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau.' };
+    case 'auth/user-disabled':
+      return { form: 'Tài khoản đã bị vô hiệu hoá.' };
+    default:
+      return { form: 'Đăng nhập thất bại. Vui lòng thử lại.' };
+  }
 }
 
 export default function LoginScreen() {
@@ -52,26 +65,40 @@ export default function LoginScreen() {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // errors
+  const [errors, setErrors] = useState<FieldErrors>({});
+
   // theme
   const [darkMode, setDarkMode] = useState(true);
   const [useLogoFallback, setUseLogoFallback] = useState(false);
 
-  const canSubmit = useMemo(
-    () => /\S+@\S+\.\S+/.test(email) && pw.length >= 1 && !loading,
-    [email, pw, loading]
-  );
+  // computed
+  const canSubmit = useMemo(() => {
+    const noClientErrors = !validateAll({ email, pw }).hasError;
+    return email.trim().length > 0 && pw.length > 0 && noClientErrors && !loading;
+  }, [email, pw, loading]);
 
-  /** -------------------------------------------------------
-   *  Đảm bảo hồ sơ users/{uid} tồn tại
-   *  - Mặc định role='user'
-   *  - Bạn có thể mở rộng thêm level/startMode nếu muốn
-   *  -------------------------------------------------------
-   */
-  const ensureUserProfile = async (
-    uid: string,
-    name?: string | null,
-    mail?: string | null
-  ) => {
+  /** ------------------ Validation ------------------ */
+  function validateAll(values: { email: string; pw: string }) {
+    const next: FieldErrors = {};
+    const e = values.email.trim();
+    const p = values.pw;
+
+    if (!e) next.email = 'Vui lòng nhập email.';
+    else if (!isEmail(e)) next.email = 'Email không hợp lệ.';
+
+    if (!p) next.pw = 'Vui lòng nhập mật khẩu.';
+    else if (p.length < 6) next.pw = 'Mật khẩu tối thiểu 6 ký tự.';
+
+    return { next, hasError: !!(next.email || next.pw) };
+  }
+
+  function setField<K extends keyof FieldErrors>(key: K, msg?: string) {
+    setErrors((prev) => ({ ...prev, [key]: msg }));
+  }
+
+  /** ------------------ Firestore profile ensure ------------------ */
+  const ensureUserProfile = async (uid: string, name?: string | null, mail?: string | null) => {
     const uRef = doc(db, 'users', uid);
     const snap = await getDoc(uRef);
 
@@ -80,44 +107,37 @@ export default function LoginScreen() {
         uid,
         name: name ?? '',
         email: mail ?? '',
-        role: 'user',                 // mặc định user
-        level: null,                  // tạm null để dẫn qua onboarding lần đầu
-        startMode: null,              // tạm null để dẫn qua onboarding lần đầu
+        role: 'user',
+        level: null,
+        startMode: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } else {
-      // cập nhật mốc đăng nhập gần nhất
-      await setDoc(
-        uRef,
-        { updatedAt: serverTimestamp() },
-        { merge: true }
-      );
+      await setDoc(uRef, { updatedAt: serverTimestamp() }, { merge: true });
     }
   };
 
-  /** -------------------------------------------------------
-   *  Đăng nhập Email/Password
-   *  - Lấy role/level/startMode để điều hướng
-   *  -------------------------------------------------------
-   */
+  /** ------------------ Submit ------------------ */
   const onLogin = async () => {
-    if (!canSubmit) {
-      Alert.alert('Thiếu/Chưa hợp lệ', 'Vui lòng nhập email và mật khẩu hợp lệ.');
-      return;
-    }
+    // clear thông báo tổng quát trước mỗi lần submit
+    setField('form', undefined);
+
+    // validate client-side
+    const { next, hasError } = validateAll({ email, pw });
+    setErrors(next);
+    if (hasError) return;
+
     try {
       setLoading(true);
       const cred = await signInWithEmailAndPassword(auth, email.trim(), pw);
       const user = cred.user;
 
-      // Đảm bảo có hồ sơ & giá trị mặc định
       await ensureUserProfile(user.uid, user.displayName, user.email);
 
-      // Đọc lại hồ sơ để lấy role/level/startMode mới nhất
       const uSnap = await getDoc(doc(db, 'users', user.uid));
       if (!uSnap.exists()) {
-        Alert.alert('Lỗi', 'Không tìm thấy dữ liệu người dùng.');
+        setField('form', 'Không tìm thấy dữ liệu người dùng.');
         return;
       }
       const data = uSnap.data() || {};
@@ -125,45 +145,31 @@ export default function LoginScreen() {
       const level = (data.level as number | null) ?? null;
       const startMode = (data.startMode as string | null) ?? null;
 
+      // Xoá lỗi cũ nếu có
+      setErrors({});
       Alert.alert('Thành công', 'Đăng nhập thành công!');
       routeByRole(router, role, { level, startMode });
     } catch (e: any) {
-      Alert.alert('Đăng nhập lỗi', e?.code ? mapAuthError(e.code) : (e?.message ?? 'Không rõ nguyên nhân'));
+      const mapped = mapAuthErrorToField(e?.code);
+      setErrors((prev) => ({ ...prev, ...mapped }));
+      // tuỳ chọn: vẫn popup nếu muốn
+      // Alert.alert('Đăng nhập lỗi', mapped.email || mapped.pw || mapped.form || 'Có lỗi xảy ra.');
     } finally {
       setLoading(false);
     }
   };
 
-  /** -------------------------------------------------------
-   *  Quên mật khẩu
-   *  -------------------------------------------------------
-   */
+  /** ------------------ Forgot ------------------ */
   const onForgot = () => {
-  // Điều hướng sang trang ForgotPassword, truyền sẵn email nếu đã nhập
-  router.push({ pathname: '/(auth)/ForgotPassword', params: { email } });
-};
-
-  /** -------------------------------------------------------
-   *  (Tuỳ chọn) Đăng nhập Google sau này
-   *  - Sau khi lấy được cred, nhớ: ensureUserProfile -> đọc users -> routeByRole
-   *  -------------------------------------------------------
-   */
-  const onLoginWithGoogle = async () => {
-    Alert.alert('Google', 'Gắn logic đăng nhập Google ở đây (expo-auth-session).');
-    // ví dụ:
-    // const { type, params } = await promptAsync();
-    // if (type === 'success' && params?.id_token) {
-    //   const credential = GoogleAuthProvider.credential(params.id_token);
-    //   const cred = await signInWithCredential(auth, credential);
-    //   const u = cred.user;
-    //   await ensureUserProfile(u.uid, u.displayName, u.email);
-    //   const uSnap = await getDoc(doc(db, 'users', u.uid));
-    //   const data = uSnap.data() || {};
-    //   routeByRole(router, data.role, { level: data.level ?? null, startMode: data.startMode ?? null });
-    // }
+    router.push({ pathname: '/(auth)/ForgotPassword', params: { email } });
   };
 
-  // màu theo theme
+  /** ------------------ Google (placeholder) ------------------ */
+  const onLoginWithGoogle = async () => {
+    Alert.alert('Google', 'Gắn logic đăng nhập Google ở đây (expo-auth-session).');
+  };
+
+  // theme colors
   const colors = darkMode ? ['#0f172a', '#111827', '#1f2937'] : ['#f3f4f6', '#e5e7eb', '#f3f4f6'];
   const textColor = darkMode ? '#fff' : '#111';
   const subText = darkMode ? '#cbd5e1' : '#374151';
@@ -171,28 +177,23 @@ export default function LoginScreen() {
   const borderColor = darkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
   const inputBg = darkMode ? 'rgba(17,24,39,0.5)' : 'rgba(255,255,255,0.85)';
 
+  // màu viền khi lỗi
+  const errorBorder = darkMode ? 'rgba(239,68,68,0.9)' : 'rgba(220,38,38,0.9)';
+  const errorText = darkMode ? '#fca5a5' : '#dc2626';
+
   return (
     <LinearGradient colors={colors} style={{ flex: 1 }} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1, padding: 20, justifyContent: 'center' }}
-          keyboardShouldPersistTaps="handled"
-        >
+        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 20, justifyContent: 'center' }} keyboardShouldPersistTaps="handled">
           {/* Toggle sáng/tối */}
-          <TouchableOpacity
-            onPress={() => setDarkMode(!darkMode)}
-            style={{ position: 'absolute', top: 40, right: 20, zIndex: 10 }}
-          >
+          <TouchableOpacity onPress={() => setDarkMode(!darkMode)} style={{ position: 'absolute', top: 40, right: 20, zIndex: 10 }}>
             <Ionicons name={darkMode ? 'sunny-outline' : 'moon-outline'} size={26} color={textColor} />
           </TouchableOpacity>
 
           {/* Logo + Title */}
           <View style={{ alignItems: 'center', marginBottom: 18 }}>
             {useLogoFallback ? (
-              <Image
-                source={{ uri: 'https://i.imgur.com/8wPDJ8K.png' }}
-                style={{ width: 72, height: 72, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }}
-              />
+              <Image source={{ uri: 'https://i.imgur.com/8wPDJ8K.png' }} style={{ width: 72, height: 72, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }} />
             ) : (
               <Image
                 source={require('../../assets/images/icon_math_resized.png')}
@@ -201,12 +202,8 @@ export default function LoginScreen() {
               />
             )}
 
-            <Text style={{ color: textColor, fontSize: 26, fontWeight: '800', marginTop: 12 }}>
-              Đăng nhập
-            </Text>
-            <Text style={{ color: subText, marginTop: 4, fontSize: 14 }}>
-              Rất vui được gặp lại bạn 👋
-            </Text>
+            <Text style={{ color: textColor, fontSize: 26, fontWeight: '800', marginTop: 12 }}>Đăng nhập</Text>
+            <Text style={{ color: subText, marginTop: 4, fontSize: 14 }}>Rất vui được gặp lại bạn 👋</Text>
           </View>
 
           {/* Card */}
@@ -224,12 +221,31 @@ export default function LoginScreen() {
               shadowOffset: { width: 0, height: 8 },
             }}
           >
+            {/* Thông báo tổng quát (nếu có) */}
+            {errors.form ? (
+              <View
+                style={{
+                  backgroundColor: darkMode ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.08)',
+                  borderColor: errorBorder,
+                  borderWidth: 1,
+                  padding: 10,
+                  borderRadius: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <Ionicons name="alert-circle-outline" size={18} color={errorText} />
+                <Text style={{ color: errorText, flex: 1 }}>{errors.form}</Text>
+              </View>
+            ) : null}
+
             {/* Email */}
             <View
               style={{
                 borderRadius: 12,
                 borderWidth: 1,
-                borderColor: borderColor,
+                borderColor: errors.email ? errorBorder : borderColor,
                 paddingHorizontal: 12,
                 paddingVertical: 6,
                 flexDirection: 'row',
@@ -238,24 +254,38 @@ export default function LoginScreen() {
                 backgroundColor: inputBg,
               }}
             >
-              <MaterialCommunityIcons name="email-outline" size={18} color={subText} />
+              <MaterialCommunityIcons name="email-outline" size={18} color={errors.email ? errorText : subText} />
               <TextInput
                 placeholder="Email"
                 placeholderTextColor={subText}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => {
+                  setEmail(v);
+                  // validate khi gõ
+                  const trimmed = v.trim();
+                  if (!trimmed) setField('email', 'Vui lòng nhập email.');
+                  else if (!isEmail(trimmed)) setField('email', 'Email không hợp lệ.');
+                  else setField('email', undefined);
+                }}
+                onBlur={() => {
+                  const trimmed = email.trim();
+                  if (!trimmed) setField('email', 'Vui lòng nhập email.');
+                  else if (!isEmail(trimmed)) setField('email', 'Email không hợp lệ.');
+                }}
                 style={{ color: textColor, flex: 1, paddingVertical: 10 }}
               />
+              {errors.email ? <Ionicons name="alert-circle" size={18} color={errorText} /> : null}
             </View>
+            {errors.email ? <Text style={{ color: errorText, fontSize: 12, marginTop: -6 }}>{errors.email}</Text> : null}
 
             {/* Password */}
             <View
               style={{
                 borderRadius: 12,
                 borderWidth: 1,
-                borderColor: borderColor,
+                borderColor: errors.pw ? errorBorder : borderColor,
                 paddingHorizontal: 12,
                 paddingVertical: 6,
                 flexDirection: 'row',
@@ -264,19 +294,30 @@ export default function LoginScreen() {
                 backgroundColor: inputBg,
               }}
             >
-              <MaterialCommunityIcons name="lock-outline" size={18} color={subText} />
+              <MaterialCommunityIcons name="lock-outline" size={18} color={errors.pw ? errorText : subText} />
               <TextInput
                 placeholder="Mật khẩu"
                 placeholderTextColor={subText}
                 value={pw}
-                onChangeText={setPw}
+                onChangeText={(v) => {
+                  setPw(v);
+                  if (!v) setField('pw', 'Vui lòng nhập mật khẩu.');
+                  else if (v.length < 6) setField('pw', 'Mật khẩu tối thiểu 6 ký tự.');
+                  else setField('pw', undefined);
+                }}
+                onBlur={() => {
+                  if (!pw) setField('pw', 'Vui lòng nhập mật khẩu.');
+                  else if (pw.length < 6) setField('pw', 'Mật khẩu tối thiểu 6 ký tự.');
+                }}
                 secureTextEntry={!showPw}
                 style={{ color: textColor, flex: 1, paddingVertical: 10 }}
               />
               <TouchableOpacity onPress={() => setShowPw(!showPw)}>
-                <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={subText} />
+                <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={errors.pw ? errorText : subText} />
               </TouchableOpacity>
+              {errors.pw ? <Ionicons name="alert-circle" size={18} color={errorText} /> : null}
             </View>
+            {errors.pw ? <Text style={{ color: errorText, fontSize: 12, marginTop: -6 }}>{errors.pw}</Text> : null}
 
             {/* Forgot + Submit */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -293,11 +334,7 @@ export default function LoginScreen() {
                   borderRadius: 12,
                 }}
               >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>Đăng nhập</Text>
-                )}
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Đăng nhập</Text>}
               </TouchableOpacity>
             </View>
 
@@ -323,10 +360,7 @@ export default function LoginScreen() {
                 gap: 8,
               }}
             >
-              <Image
-                source={{ uri: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg' }}
-                style={{ width: 18, height: 18 }}
-              />
+              <Image source={{ uri: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg' }} style={{ width: 18, height: 18 }} />
               <Text style={{ color: textColor, fontWeight: '600' }}>Đăng nhập với Google</Text>
             </TouchableOpacity>
           </View>
@@ -335,10 +369,7 @@ export default function LoginScreen() {
           <View style={{ alignItems: 'center', marginTop: 16 }}>
             <Text style={{ color: subText }}>
               Chưa có tài khoản?{' '}
-              <Text
-                style={{ color: '#93c5fd', fontWeight: '700' }}
-                onPress={() => router.push('/(auth)/register')}
-              >
+              <Text style={{ color: '#93c5fd', fontWeight: '700' }} onPress={() => router.push('/(auth)/register')}>
                 Đăng ký
               </Text>
             </Text>
@@ -347,22 +378,4 @@ export default function LoginScreen() {
       </KeyboardAvoidingView>
     </LinearGradient>
   );
-}
-
-/** Map mã lỗi Firebase Auth -> thông điệp tiếng Việt gọn gàng */
-function mapAuthError(code?: string) {
-  switch (code) {
-    case 'auth/invalid-email':
-      return 'Email không hợp lệ.';
-    case 'auth/user-not-found':
-      return 'Tài khoản không tồn tại.';
-    case 'auth/wrong-password':
-      return 'Sai mật khẩu.';
-    case 'auth/too-many-requests':
-      return 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau.';
-    case 'auth/user-disabled':
-      return 'Tài khoản đã bị vô hiệu hoá.';
-    default:
-      return 'Đăng nhập thất bại.';
-  }
 }

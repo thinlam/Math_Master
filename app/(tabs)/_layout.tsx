@@ -120,6 +120,11 @@ export default function TabLayout() {
         name = "Practice/Speed"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="Practice/Daily"
+        options={{ href: null }}
+      />
+      
     </Tabs>
   );
 }
