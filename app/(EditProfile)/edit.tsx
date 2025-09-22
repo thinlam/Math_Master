@@ -208,7 +208,7 @@ export default function EditProfileScreen() {
 
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+        <TouchableOpacity onPress={() => router.push('/(tabs)/Profile')} style={styles.headerBtn}>
           <Ionicons name="chevron-back" size={22} color={palette.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Chỉnh sửa hồ sơ</Text>

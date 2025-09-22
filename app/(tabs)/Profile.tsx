@@ -11,13 +11,14 @@ import {
   RefreshControl,
   ScrollView,
   StatusBar,
-  StyleSheet,
   Switch,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { makeProfileStyles, ProfileStatCardStyles } from '@/components/style/tab/ProfileStyles';
 
 /* Firebase core + Firestore */
 import { auth, db } from '@/scripts/firebase';
@@ -115,60 +116,19 @@ type UserProfile = {
   photoURL?: string | null;
 };
 
-/* ---------------- Styles ---------------- */
-function makeStyles(p: Palette) {
-  return StyleSheet.create({
-    container: { flex: 1, backgroundColor: p.bg },
-    scroll: { padding: 16, gap: 12 },
-    card: { backgroundColor: p.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: p.cardBorder },
-    row: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-    avatar: { width: 60, height: 60, borderRadius: 999, backgroundColor: p.cardBorder, justifyContent: 'center', alignItems: 'center' },
-    avatarTxt: { color: p.brand, fontSize: 20, fontWeight: '700' },
-    name: { fontSize: 18, fontWeight: '700', color: p.text },
-    email: { fontSize: 13, color: p.textMuted, marginTop: 2 },
-    levelPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: p.pillBg, borderWidth: 1, borderColor: p.pillBorder },
-    levelTxt: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
-    logoutBtn: { marginTop: 6, backgroundColor: p.danger, borderRadius: 12, paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
-    logoutTxt: { color: '#fff', fontWeight: '700' },
-    link: { color: p.link, fontSize: 13, fontWeight: '600' },
-  });
-}
-
 /* ========= Helpers tính streak theo mốc ngày UTC ========= */
+function startOfUTCDay(d: Date) { return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); }
+function diffDaysUTC(a: Date, b: Date) { return Math.floor((startOfUTCDay(b) - startOfUTCDay(a)) / 86400000); }
 
-/** Trả về 00:00:00 (UTC) của ngày chứa d */
-function startOfUTCDay(d: Date) {
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-/** Số ngày lệch theo lịch (UTC) giữa a -> b */
-function diffDaysUTC(a: Date, b: Date) {
-  const A = startOfUTCDay(a);
-  const B = startOfUTCDay(b);
-  return Math.floor((B - A) / 86400000);
-}
-
-/* ========= Transaction cập nhật streak =========
-   Quy tắc:
-   - gap = 0: đã ghi nhận hôm nay → không +1
-   - gap = 1: liền ngày → streak +1
-   - gap >= 2: bỏ từ 2 ngày → reset = 1
-   Luôn cập nhật lastLoginAt = serverTimestamp() (giờ server).
-*/
+/* ========= Transaction cập nhật streak ========= */
 async function updateStreakOnLogin(uid: string) {
   const ref = doc(db, 'users', uid);
-
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const now = new Date();
 
     if (!snap.exists()) {
-      // Tạo mới doc nếu chưa có
-      tx.set(ref, {
-        streak_days: 1,
-        lastLoginAt: serverTimestamp(),
-        _touchedAt: serverTimestamp(), // No-Op để luôn có updateMask
-      }, { merge: true });
+      tx.set(ref, { streak_days: 1, lastLoginAt: serverTimestamp(), _touchedAt: serverTimestamp() }, { merge: true });
       return;
     }
 
@@ -177,87 +137,49 @@ async function updateStreakOnLogin(uid: string) {
     const lastTs: Timestamp | null = data.lastLoginAt ?? null;
 
     if (!lastTs) {
-      // Chưa từng lưu lastLoginAt → bắt đầu đếm
-      tx.update(ref, {
-        streak_days: Math.max(1, prevStreak || 1),
-        lastLoginAt: serverTimestamp(),
-        _touchedAt: serverTimestamp(),
-      });
+      tx.update(ref, { streak_days: Math.max(1, prevStreak || 1), lastLoginAt: serverTimestamp(), _touchedAt: serverTimestamp() });
       return;
     }
 
-    const lastDate = lastTs.toDate();
-    const gap = diffDaysUTC(lastDate, now); // 0, 1, 2+
-
+    const gap = diffDaysUTC(lastTs.toDate(), now);
     if (gap <= 0) {
-      // Cùng ngày → chỉ chạm doc để sinh updateTime (tránh transform-only)
       tx.set(ref, { _touchedAt: serverTimestamp(), lastLoginAt: serverTimestamp() }, { merge: true });
     } else if (gap === 1) {
-      // Liền ngày → tăng streak
-      tx.update(ref, {
-        streak_days: (prevStreak || 0) + 1,
-        lastLoginAt: serverTimestamp(),
-        _touchedAt: serverTimestamp(),
-      });
+      tx.update(ref, { streak_days: (prevStreak || 0) + 1, lastLoginAt: serverTimestamp(), _touchedAt: serverTimestamp() });
     } else {
-      // Bỏ 2+ ngày → reset về 1
-      tx.update(ref, {
-        streak_days: 1,
-        lastLoginAt: serverTimestamp(),
-        _touchedAt: serverTimestamp(),
-      });
+      tx.update(ref, { streak_days: 1, lastLoginAt: serverTimestamp(), _touchedAt: serverTimestamp() });
     }
   });
 }
 
-/* ========= Retry wrapper để nuốt xung đột failed-precondition ========= */
+/* ========= Retry wrapper ========= */
 async function updateStreakOnLoginWithRetry(uid: string) {
   const maxAttempts = 3;
   let attempt = 0;
-
-   
   while (true) {
-    try {
-      await updateStreakOnLogin(uid);
-      return;
-    } catch (e: any) {
-      const code =
-        e instanceof FirebaseError ? e.code : e?.code;
-      const isFailedPrecondition = code === 'failed-precondition';
-      attempt++;
-
-      if (!isFailedPrecondition || attempt >= maxAttempts) {
-        throw e;
-      }
-
-      // Jitter backoff 80–220ms
-      const wait = 80 + Math.floor(Math.random() * 140);
-      await new Promise((r) => setTimeout(r, wait));
+    try { await updateStreakOnLogin(uid); return; }
+    catch (e: any) {
+      const code = e instanceof FirebaseError ? e.code : e?.code;
+      if (code !== 'failed-precondition' || ++attempt >= maxAttempts) throw e;
+      await new Promise(r => setTimeout(r, 80 + Math.floor(Math.random() * 140)));
     }
   }
 }
 
-/* ========= Gate chống gọi trùng (debounce + mutex) ========= */
+/* ========= Gate chống gọi trùng ========= */
 const streakGateRef = { inFlight: false, lastRun: 0 };
-
 async function safeUpdateStreak(uid: string) {
-  // Không chạy nếu đang chạy hoặc mới chạy trong 5s gần nhất
   if (streakGateRef.inFlight || Date.now() - streakGateRef.lastRun < 5000) return;
-
   streakGateRef.inFlight = true;
-  try {
-    await updateStreakOnLoginWithRetry(uid);
-    streakGateRef.lastRun = Date.now();
-  } finally {
-    streakGateRef.inFlight = false;
-  }
+  try { await updateStreakOnLoginWithRetry(uid); streakGateRef.lastRun = Date.now(); }
+  finally { streakGateRef.inFlight = false; }
 }
 
 /* ---------------- Screen ---------------- */
 export default function ProfileScreen() {
   const router = useRouter();
   const { colorScheme, palette, setTheme } = useTheme();
-  const styles = useMemo(() => makeStyles(palette), [palette]);
+  const styles = useMemo(() => makeProfileStyles(palette), [palette]);
 
   // Settings
   const [language, setLanguage] = useState<Lang>('vi');
@@ -298,14 +220,13 @@ export default function ProfileScreen() {
     return unsub;
   }, [router]);
 
-  /* ---- fetch profile once ---- */
+  /* ---- fetch profile ---- */
   const fetchProfile = useCallback(async (u: User) => {
     setLoading(true); setError(null);
     try {
       const ref = doc(db, 'users', u.uid);
       const snap = await getDoc(ref);
       const data = snap.exists() ? (snap.data() as any) : {};
-
       const profile: UserProfile = {
         uid: u.uid,
         name: u.displayName || data.name || t(language, 'user'),
@@ -313,10 +234,10 @@ export default function ProfileScreen() {
         photoURL: (data.photoURL as string) ?? u.photoURL ?? null,
         level: data.level ?? null,
         points: typeof data.points === 'number' ? data.points : 0,
-        // hỗ trợ nhiều key cho streak
-        streak: (typeof data.streak_days === 'number' && data.streak_days) ||
-                (typeof data.streakDays === 'number' && data.streakDays) ||
-                (typeof data.streak === 'number' && data.streak) || 0,
+        streak:
+          (typeof data.streak_days === 'number' && data.streak_days) ||
+          (typeof data.streakDays === 'number' && data.streakDays) ||
+          (typeof data.streak === 'number' && data.streak) || 0,
       };
       setUser(profile);
     } catch (e) {
@@ -334,7 +255,7 @@ export default function ProfileScreen() {
     return () => { active = false; };
   }, [firebaseUser, fetchProfile]));
 
-  /* ---- live subscribe: user doc + badge subcollection ---- */
+  /* ---- subscribe: user doc + badges ---- */
   useEffect(() => {
     if (!firebaseUser) return;
     const uid = firebaseUser.uid;
@@ -376,16 +297,9 @@ export default function ProfileScreen() {
     return () => { unsubUser(); unsubBadges(); };
   }, [firebaseUser]);
 
-  /* ---- GỌI cập nhật streak an toàn (gate + retry) ---- */
-  useEffect(() => {
-    if (firebaseUser) safeUpdateStreak(firebaseUser.uid).catch(console.error);
-  }, [firebaseUser]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (firebaseUser) safeUpdateStreak(firebaseUser.uid).catch(console.error);
-    }, [firebaseUser])
-  );
+  /* ---- cập nhật streak an toàn ---- */
+  useEffect(() => { if (firebaseUser) safeUpdateStreak(firebaseUser.uid).catch(console.error); }, [firebaseUser]);
+  useFocusEffect(useCallback(() => { if (firebaseUser) safeUpdateStreak(firebaseUser.uid).catch(console.error); }, [firebaseUser]));
 
   /* ---- helpers ---- */
   const initials = useMemo(() => {
@@ -412,7 +326,7 @@ export default function ProfileScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top','left','right']}>
         <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <View style={styles.center}>
           <ActivityIndicator size="large" />
           <Text style={{ color: palette.textMuted }}>{t(language, 'loading')}</Text>
         </View>
@@ -424,10 +338,10 @@ export default function ProfileScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top','left','right']}>
         <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        <View style={styles.errorWrap}>
           <Text style={{ color: palette.danger }}>{error || t(language, 'errorLoad')}</Text>
-          <TouchableOpacity style={{ backgroundColor: palette.brandSoft, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }} onPress={() => firebaseUser && fetchProfile(firebaseUser)}>
-            <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>{t(language, 'pullToRefresh')}</Text>
+          <TouchableOpacity style={styles.errorBtn} onPress={() => firebaseUser && fetchProfile(firebaseUser)}>
+            <Text style={styles.errorBtnTxt}>{t(language, 'pullToRefresh')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -449,7 +363,7 @@ export default function ProfileScreen() {
         <View style={styles.card}>
           <View style={styles.row}>
             {user.photoURL ? (
-              <Image source={{ uri: user.photoURL }} style={{ width: 60, height: 60, borderRadius: 999, backgroundColor: palette.cardBorder }} resizeMode="cover" />
+              <Image source={{ uri: user.photoURL }} style={styles.avatarImg} resizeMode="cover" />
             ) : (
               <View style={styles.avatar}><Text style={styles.avatarTxt}>{initials}</Text></View>
             )}
@@ -458,28 +372,21 @@ export default function ProfileScreen() {
               <Text style={styles.name} numberOfLines={1}>{user.name}</Text>
               <Text style={styles.email} numberOfLines={1}>{user.email}</Text>
 
-              <View style={[
-                styles.levelPill,
-                { marginTop: 8 },
-                !user.level && { borderStyle: 'dashed', backgroundColor: 'transparent' }
-              ]}>
+              <View style={[styles.levelPill, !user.level && styles.levelPillEmpty]}>
                 <Ionicons name="school-outline" size={16} color={palette.ionMain} />
                 <Text style={styles.levelTxt}>{user.level || t(language, 'noClass')}</Text>
               </View>
             </View>
 
-            <TouchableOpacity
-              style={{ flexDirection: 'row', gap: 6, backgroundColor: palette.editBtnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, alignItems: 'center' }}
-              onPress={() => router.push('/(EditProfile)/edit')}
-            >
+            <TouchableOpacity style={styles.editBtn} onPress={() => router.push('/(EditProfile)/edit')}>
               <Ionicons name="create-outline" size={18} color={palette.editBtnText} />
-              <Text style={{ color: palette.editBtnText, fontWeight: '700' }}>{t(language, 'edit')}</Text>
+              <Text style={styles.editBtnTxt}>{t(language, 'edit')}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Stats */}
-        <View style={{ flexDirection: 'row', gap: 12 }}>
+        <View style={styles.statsRow}>
           <StatCard icon="diamond-stone" color="#9333EA" label={t(language, 'points')} value={String(user.points)} palette={palette} />
           <StatCard icon="medal-outline" color={palette.mciGold} label={t(language, 'badges')} value={String(badgeCount)} palette={palette} />
           <StatCard icon="fire" color={palette.streak} label={t(language, 'streak')} value={`${user.streak} ${t(language, 'days')}`} palette={palette} />
@@ -487,10 +394,10 @@ export default function ProfileScreen() {
 
         {/* Earned Badges (latest 3) */}
         <View style={styles.card}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>{t(language, 'earnedBadges')}</Text>
+          <View style={styles.earnedHeader}>
+            <Text style={styles.earnedTitle}>{t(language, 'earnedBadges')}</Text>
             <TouchableOpacity onPress={() => router.push('/(tabs)/Profile/Badges')}>
-              <Text style={styles.link}>{t(language, 'viewAll')}</Text>
+              <Text style={styles.earnedLink}>{t(language, 'viewAll')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -499,27 +406,17 @@ export default function ProfileScreen() {
               data={latestBadges}
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 12, paddingTop: 10 }}
+              contentContainerStyle={styles.earnedList as any}
               keyExtractor={(b) => b.id}
               renderItem={({ item }) => (
-                <View style={{
-                  width: 110,
-                  height: 78,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: palette.cardBorder,
-                  backgroundColor: palette.bg,
-                  padding: 10,
-                  justifyContent: 'center',
-                  gap: 6
-                }}>
+                <View style={styles.badgeItem}>
                   <MaterialCommunityIcons name={item.icon as any} size={22} color={palette.mciGold} />
-                  <Text style={{ color: palette.textFaint, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
+                  <Text style={styles.badgeTitle} numberOfLines={1}>{item.title}</Text>
                 </View>
               )}
             />
           ) : (
-            <Text style={{ marginTop: 10, color: palette.textMuted, fontSize: 13 }}>{t(language, 'noBadges')}</Text>
+            <Text style={styles.noBadges}>{t(language, 'noBadges')}</Text>
           )}
         </View>
 
@@ -567,51 +464,55 @@ export default function ProfileScreen() {
 /* ---------------- Sub Components ---------------- */
 function StatCard({ icon, label, value, color, palette }: { icon: any; label: string; value: string; color: string; palette: Palette; }) {
   return (
-    <View style={{ flex: 1, backgroundColor: palette.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: palette.cardBorder, alignItems: 'flex-start', gap: 6 }}>
-      <View style={{ borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: `${color}${palette.statIconBgAlpha}` }}>
+    <View style={[ProfileStatCardStyles.container, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}>
+      <View style={[ProfileStatCardStyles.iconWrap, { backgroundColor: `${color}${palette.statIconBgAlpha}` }]}>
         <MaterialCommunityIcons name={icon} size={18} color={color} />
       </View>
-      <Text style={{ color: palette.text, fontSize: 18, fontWeight: '700' }}>{value}</Text>
-      <Text style={{ color: palette.textMuted, fontSize: 12 }}>{label}</Text>
+      <Text style={[ProfileStatCardStyles.value, { color: palette.text }]}>{value}</Text>
+      <Text style={[ProfileStatCardStyles.label, { color: palette.textMuted }]}>{label}</Text>
     </View>
   );
 }
 
 function Section({ title, children, palette }: { title: string; children: React.ReactNode; palette: Palette; }) {
+  const styles = useMemo(() => makeProfileStyles(palette), [palette]); // reuse tokens safely
   return (
-    <View style={{ backgroundColor: palette.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: palette.cardBorder }}>
-      <Text style={{ color: palette.text, fontSize: 16, fontWeight: '700' }}>{title}</Text>
-      <View style={{ marginTop: 6 }}>{children}</View>
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionBody}>{children}</View>
     </View>
   );
 }
 
 function SettingItem({ icon, label, onPress, palette }: { icon: any; label: string; onPress?: () => void; palette: Palette; }) {
+  const s = useMemo(() => makeProfileStyles(palette), [palette]);
   return (
-    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }} onPress={onPress}>
+    <TouchableOpacity style={[s.settingRow, s.settingBorder]} onPress={onPress}>
       <Ionicons name={icon} size={20} color={palette.ionMain} />
-      <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
-      <Ionicons name="chevron-forward" size={18} color={palette.ionMuted} />
+      <Text style={s.settingLabel}>{label}</Text>
+      <Ionicons name="chevron-forward" size={18} color={palette.ionMuted} style={s.settingChevron} />
     </TouchableOpacity>
   );
 }
 
 function SettingSwitch({ icon, label, value, onValueChange, palette }: { icon: any; label: string; value: boolean; onValueChange: (v: boolean) => void; palette: Palette; }) {
+  const s = useMemo(() => makeProfileStyles(palette), [palette]);
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }}>
+    <View style={[s.settingRow, s.settingBorder]}>
       <Ionicons name={icon} size={20} color={palette.ionMain} />
-      <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+      <Text style={s.settingLabel}>{label}</Text>
       <Switch value={value} onValueChange={onValueChange} trackColor={{ false: '#CBD5E1', true: '#93C5FD' }} thumbColor={value ? '#2563EB' : '#ffffff'} />
     </View>
   );
 }
 
 function SettingPicker({ icon, label, value, onPress, palette }: { icon: any; label: string; value: string; onPress?: () => void; palette: Palette; }) {
+  const s = useMemo(() => makeProfileStyles(palette), [palette]);
   return (
-    <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.divider }} onPress={onPress}>
+    <TouchableOpacity style={[s.settingRow, s.settingBorder]} onPress={onPress}>
       <Ionicons name={icon} size={20} color={palette.ionMain} />
-      <Text style={{ flex: 1, color: palette.brand, fontSize: 14, fontWeight: '600' }}>{label}</Text>
-      <Text style={{ marginRight: 6, color: palette.textMuted, fontSize: 13 }}>{value}</Text>
+      <Text style={s.settingLabel}>{label}</Text>
+      <Text style={s.pickerValue}>{value}</Text>
       <Ionicons name="swap-vertical" size={18} color={palette.ionMuted} />
     </TouchableOpacity>
   );
