@@ -19,11 +19,13 @@ import {
   View,
 } from 'react-native';
 
-/** ------------------ Types ------------------ */
+import { LoginStaticStyles as S, themedTokens } from '@/components/style/auth/LoginStyles';
+
+/** Types */
 type AppRole = 'admin' | 'premium' | 'user' | string;
 type FieldErrors = { email?: string; pw?: string; form?: string };
 
-/** ------------------ Helpers ------------------ */
+/** Helpers */
 const isEmail = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
 
 function routeByRole(
@@ -38,7 +40,6 @@ function routeByRole(
   return router.replace('/(tabs)');
 }
 
-/** Map mã lỗi Firebase Auth -> thông điệp + field gắn lỗi */
 function mapAuthErrorToField(code?: string): FieldErrors {
   switch (code) {
     case 'auth/invalid-email':
@@ -59,37 +60,28 @@ function mapAuthErrorToField(code?: string): FieldErrors {
 export default function LoginScreen() {
   const router = useRouter();
 
-  // form
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // errors
   const [errors, setErrors] = useState<FieldErrors>({});
-
-  // theme
   const [darkMode, setDarkMode] = useState(true);
   const [useLogoFallback, setUseLogoFallback] = useState(false);
+  const T = useMemo(() => themedTokens(darkMode), [darkMode]);
 
-  // computed
   const canSubmit = useMemo(() => {
     const noClientErrors = !validateAll({ email, pw }).hasError;
     return email.trim().length > 0 && pw.length > 0 && noClientErrors && !loading;
   }, [email, pw, loading]);
 
-  /** ------------------ Validation ------------------ */
+  /** Validation */
   function validateAll(values: { email: string; pw: string }) {
     const next: FieldErrors = {};
-    const e = values.email.trim();
-    const p = values.pw;
-
-    if (!e) next.email = 'Vui lòng nhập email.';
-    else if (!isEmail(e)) next.email = 'Email không hợp lệ.';
-
-    if (!p) next.pw = 'Vui lòng nhập mật khẩu.';
-    else if (p.length < 6) next.pw = 'Mật khẩu tối thiểu 6 ký tự.';
-
+    if (!values.email.trim()) next.email = 'Vui lòng nhập email.';
+    else if (!isEmail(values.email.trim())) next.email = 'Email không hợp lệ.';
+    if (!values.pw) next.pw = 'Vui lòng nhập mật khẩu.';
+    else if (values.pw.length < 6) next.pw = 'Mật khẩu tối thiểu 6 ký tự.';
     return { next, hasError: !!(next.email || next.pw) };
   }
 
@@ -97,11 +89,10 @@ export default function LoginScreen() {
     setErrors((prev) => ({ ...prev, [key]: msg }));
   }
 
-  /** ------------------ Firestore profile ensure ------------------ */
+  /** Firestore ensure */
   const ensureUserProfile = async (uid: string, name?: string | null, mail?: string | null) => {
     const uRef = doc(db, 'users', uid);
     const snap = await getDoc(uRef);
-
     if (!snap.exists()) {
       await setDoc(uRef, {
         uid,
@@ -118,12 +109,9 @@ export default function LoginScreen() {
     }
   };
 
-  /** ------------------ Submit ------------------ */
+  /** Submit */
   const onLogin = async () => {
-    // clear thông báo tổng quát trước mỗi lần submit
     setField('form', undefined);
-
-    // validate client-side
     const { next, hasError } = validateAll({ email, pw });
     setErrors(next);
     if (hasError) return;
@@ -132,244 +120,128 @@ export default function LoginScreen() {
       setLoading(true);
       const cred = await signInWithEmailAndPassword(auth, email.trim(), pw);
       const user = cred.user;
-
       await ensureUserProfile(user.uid, user.displayName, user.email);
 
       const uSnap = await getDoc(doc(db, 'users', user.uid));
-      if (!uSnap.exists()) {
-        setField('form', 'Không tìm thấy dữ liệu người dùng.');
-        return;
-      }
       const data = uSnap.data() || {};
-      const role: AppRole = (data.role as AppRole) || 'user';
+      const role: AppRole = (data?.role as AppRole) || 'user';
       const level = (data.level as number | null) ?? null;
       const startMode = (data.startMode as string | null) ?? null;
 
-      // Xoá lỗi cũ nếu có
       setErrors({});
       Alert.alert('Thành công', 'Đăng nhập thành công!');
       routeByRole(router, role, { level, startMode });
     } catch (e: any) {
       const mapped = mapAuthErrorToField(e?.code);
       setErrors((prev) => ({ ...prev, ...mapped }));
-      // tuỳ chọn: vẫn popup nếu muốn
-      // Alert.alert('Đăng nhập lỗi', mapped.email || mapped.pw || mapped.form || 'Có lỗi xảy ra.');
     } finally {
       setLoading(false);
     }
   };
 
-  /** ------------------ Forgot ------------------ */
-  const onForgot = () => {
-    router.push({ pathname: '/(auth)/ForgotPassword', params: { email } });
-  };
-
-  /** ------------------ Google (placeholder) ------------------ */
-  const onLoginWithGoogle = async () => {
-    Alert.alert('Google', 'Gắn logic đăng nhập Google ở đây (expo-auth-session).');
-  };
-
-  // theme colors
-  const colors = darkMode ? ['#0f172a', '#111827', '#1f2937'] : ['#f3f4f6', '#e5e7eb', '#f3f4f6'];
-  const textColor = darkMode ? '#fff' : '#111';
-  const subText = darkMode ? '#cbd5e1' : '#374151';
-  const cardBg = darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
-  const borderColor = darkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
-  const inputBg = darkMode ? 'rgba(17,24,39,0.5)' : 'rgba(255,255,255,0.85)';
-
-  // màu viền khi lỗi
-  const errorBorder = darkMode ? 'rgba(239,68,68,0.9)' : 'rgba(220,38,38,0.9)';
-  const errorText = darkMode ? '#fca5a5' : '#dc2626';
+  const onForgot = () => router.push({ pathname: '/(auth)/ForgotPassword', params: { email } });
+  const onLoginWithGoogle = () => Alert.alert('Google', 'Gắn logic đăng nhập Google ở đây.');
 
   return (
-    <LinearGradient colors={colors} style={{ flex: 1 }} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 20, justifyContent: 'center' }} keyboardShouldPersistTaps="handled">
-          {/* Toggle sáng/tối */}
-          <TouchableOpacity onPress={() => setDarkMode(!darkMode)} style={{ position: 'absolute', top: 40, right: 20, zIndex: 10 }}>
-            <Ionicons name={darkMode ? 'sunny-outline' : 'moon-outline'} size={26} color={textColor} />
+    <LinearGradient colors={T.gradient} style={S.root} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+      <KeyboardAvoidingView style={S.kbd} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={S.scroll} keyboardShouldPersistTaps="handled">
+          {/* Toggle */}
+          <TouchableOpacity onPress={() => setDarkMode(!darkMode)} style={S.toggle}>
+            <Ionicons name={darkMode ? 'sunny-outline' : 'moon-outline'} size={26} color={T.text} />
           </TouchableOpacity>
 
-          {/* Logo + Title */}
-          <View style={{ alignItems: 'center', marginBottom: 18 }}>
+          {/* Header */}
+          <View style={S.header}>
             {useLogoFallback ? (
-              <Image source={{ uri: 'https://i.imgur.com/8wPDJ8K.png' }} style={{ width: 72, height: 72, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }} />
+              <Image source={{ uri: 'https://i.imgur.com/8wPDJ8K.png' }} style={[S.logo, { opacity: darkMode ? 0.95 : 1 }]} />
             ) : (
               <Image
                 source={require('../../assets/images/icon_math_resized.png')}
                 onError={() => setUseLogoFallback(true)}
-                style={{ width: 72, height: 120, borderRadius: 16, opacity: darkMode ? 0.95 : 1 }}
+                style={[S.logo, { opacity: darkMode ? 0.95 : 1 }]}
               />
             )}
-
-            <Text style={{ color: textColor, fontSize: 26, fontWeight: '800', marginTop: 12 }}>Đăng nhập</Text>
-            <Text style={{ color: subText, marginTop: 4, fontSize: 14 }}>Rất vui được gặp lại bạn 👋</Text>
+            <Text style={[S.title, { color: T.text }]}>Đăng nhập</Text>
+            <Text style={[S.subtitle, { color: T.subText }]}>Rất vui được gặp lại bạn 👋</Text>
           </View>
 
           {/* Card */}
-          <View
-            style={{
-              backgroundColor: cardBg,
-              borderWidth: 1,
-              borderColor: borderColor,
-              borderRadius: 18,
-              padding: 16,
-              gap: 12,
-              shadowColor: '#000',
-              shadowOpacity: 0.25,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: 8 },
-            }}
-          >
-            {/* Thông báo tổng quát (nếu có) */}
-            {errors.form ? (
-              <View
-                style={{
-                  backgroundColor: darkMode ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.08)',
-                  borderColor: errorBorder,
-                  borderWidth: 1,
-                  padding: 10,
-                  borderRadius: 10,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
-                <Ionicons name="alert-circle-outline" size={18} color={errorText} />
-                <Text style={{ color: errorText, flex: 1 }}>{errors.form}</Text>
+          <View style={[S.card, { backgroundColor: T.cardBg, borderColor: T.border }]}>
+            {errors.form && (
+              <View style={[S.errorBox, { backgroundColor: 'rgba(239,68,68,0.08)', borderColor: T.errorBorder }]}>
+                <Ionicons name="alert-circle-outline" size={18} color={T.errorText} />
+                <Text style={[S.errorTxt, { color: T.errorText }]}>{errors.form}</Text>
               </View>
-            ) : null}
+            )}
 
             {/* Email */}
-            <View
-              style={{
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: errors.email ? errorBorder : borderColor,
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                backgroundColor: inputBg,
-              }}
-            >
-              <MaterialCommunityIcons name="email-outline" size={18} color={errors.email ? errorText : subText} />
+            <View style={[S.inputRow, { borderColor: errors.email ? T.errorBorder : T.border, backgroundColor: T.inputBg }]}>
+              <MaterialCommunityIcons name="email-outline" size={18} color={errors.email ? T.errorText : T.subText} />
               <TextInput
                 placeholder="Email"
-                placeholderTextColor={subText}
+                placeholderTextColor={T.subText}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 value={email}
-                onChangeText={(v) => {
-                  setEmail(v);
-                  // validate khi gõ
-                  const trimmed = v.trim();
-                  if (!trimmed) setField('email', 'Vui lòng nhập email.');
-                  else if (!isEmail(trimmed)) setField('email', 'Email không hợp lệ.');
-                  else setField('email', undefined);
-                }}
-                onBlur={() => {
-                  const trimmed = email.trim();
-                  if (!trimmed) setField('email', 'Vui lòng nhập email.');
-                  else if (!isEmail(trimmed)) setField('email', 'Email không hợp lệ.');
-                }}
-                style={{ color: textColor, flex: 1, paddingVertical: 10 }}
+                onChangeText={(v) => setEmail(v)}
+                style={[S.input, { color: T.text }]}
               />
-              {errors.email ? <Ionicons name="alert-circle" size={18} color={errorText} /> : null}
+              {errors.email && <Ionicons name="alert-circle" size={18} color={T.errorText} />}
             </View>
-            {errors.email ? <Text style={{ color: errorText, fontSize: 12, marginTop: -6 }}>{errors.email}</Text> : null}
+            {errors.email && <Text style={[S.inputErrorTxt, { color: T.errorText }]}>{errors.email}</Text>}
 
             {/* Password */}
-            <View
-              style={{
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: errors.pw ? errorBorder : borderColor,
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                backgroundColor: inputBg,
-              }}
-            >
-              <MaterialCommunityIcons name="lock-outline" size={18} color={errors.pw ? errorText : subText} />
+            <View style={[S.inputRow, { borderColor: errors.pw ? T.errorBorder : T.border, backgroundColor: T.inputBg }]}>
+              <MaterialCommunityIcons name="lock-outline" size={18} color={errors.pw ? T.errorText : T.subText} />
               <TextInput
                 placeholder="Mật khẩu"
-                placeholderTextColor={subText}
+                placeholderTextColor={T.subText}
                 value={pw}
-                onChangeText={(v) => {
-                  setPw(v);
-                  if (!v) setField('pw', 'Vui lòng nhập mật khẩu.');
-                  else if (v.length < 6) setField('pw', 'Mật khẩu tối thiểu 6 ký tự.');
-                  else setField('pw', undefined);
-                }}
-                onBlur={() => {
-                  if (!pw) setField('pw', 'Vui lòng nhập mật khẩu.');
-                  else if (pw.length < 6) setField('pw', 'Mật khẩu tối thiểu 6 ký tự.');
-                }}
+                onChangeText={(v) => setPw(v)}
                 secureTextEntry={!showPw}
-                style={{ color: textColor, flex: 1, paddingVertical: 10 }}
+                style={[S.input, { color: T.text }]}
               />
               <TouchableOpacity onPress={() => setShowPw(!showPw)}>
-                <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={errors.pw ? errorText : subText} />
+                <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={errors.pw ? T.errorText : T.subText} />
               </TouchableOpacity>
-              {errors.pw ? <Ionicons name="alert-circle" size={18} color={errorText} /> : null}
+              {errors.pw && <Ionicons name="alert-circle" size={18} color={T.errorText} />}
             </View>
-            {errors.pw ? <Text style={{ color: errorText, fontSize: 12, marginTop: -6 }}>{errors.pw}</Text> : null}
+            {errors.pw && <Text style={[S.inputErrorTxt, { color: T.errorText }]}>{errors.pw}</Text>}
 
             {/* Forgot + Submit */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={S.actionRow}>
               <TouchableOpacity onPress={onForgot}>
-                <Text style={{ color: '#93c5fd', fontWeight: '600' }}>Quên mật khẩu?</Text>
+                <Text style={S.forgot}>Quên mật khẩu?</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={onLogin}
                 disabled={!canSubmit}
-                style={{
-                  backgroundColor: canSubmit ? '#3b82f6' : 'rgba(59,130,246,0.35)',
-                  paddingVertical: 12,
-                  paddingHorizontal: 18,
-                  borderRadius: 12,
-                }}
+                style={[S.loginBtn, { backgroundColor: canSubmit ? T.primary : T.primaryDisabled }]}
               >
-                {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Đăng nhập</Text>}
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={S.loginTxt}>Đăng nhập</Text>}
               </TouchableOpacity>
             </View>
 
             {/* Divider */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 10 }}>
-              <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(148,163,184,0.25)' }} />
-              <Text style={{ color: subText, fontSize: 12 }}>hoặc</Text>
-              <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(148,163,184,0.25)' }} />
+            <View style={S.dividerRow}>
+              <View style={[S.dividerLine, { backgroundColor: 'rgba(148,163,184,0.25)' }]} />
+              <Text style={[S.dividerTxt, { color: T.subText }]}>hoặc</Text>
+              <View style={[S.dividerLine, { backgroundColor: 'rgba(148,163,184,0.25)' }]} />
             </View>
 
             {/* Google */}
-            <TouchableOpacity
-              onPress={onLoginWithGoogle}
-              style={{
-                backgroundColor: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-                paddingVertical: 12,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: borderColor,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <Image source={{ uri: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg' }} style={{ width: 18, height: 18 }} />
-              <Text style={{ color: textColor, fontWeight: '600' }}>Đăng nhập với Google</Text>
+            <TouchableOpacity onPress={onLoginWithGoogle} style={[S.socialBtn, { backgroundColor: T.socialBg, borderColor: T.border }]}>
+              <Image source={{ uri: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg' }} style={S.googleIcon} />
+              <Text style={{ color: T.text, fontWeight: '600' }}>Đăng nhập với Google</Text>
             </TouchableOpacity>
           </View>
 
-          {/* footer */}
-          <View style={{ alignItems: 'center', marginTop: 16 }}>
-            <Text style={{ color: subText }}>
+          {/* Footer */}
+          <View style={S.footer}>
+            <Text style={{ color: T.subText }}>
               Chưa có tài khoản?{' '}
-              <Text style={{ color: '#93c5fd', fontWeight: '700' }} onPress={() => router.push('/(auth)/register')}>
+              <Text style={[{ color: '#93c5fd' }, S.footerLink]} onPress={() => router.push('/(auth)/register')}>
                 Đăng ký
               </Text>
             </Text>

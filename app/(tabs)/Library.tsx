@@ -1,112 +1,50 @@
-import { useTheme, type Palette } from '@/theme/ThemeProvider';
+import { useTheme } from '@/theme/ThemeProvider';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  RefreshControl,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+  ActivityIndicator, FlatList, Modal, RefreshControl, SafeAreaView, StatusBar,
+  Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-/* ---------- Firebase ---------- */
+/* Firebase */
 import { auth, db } from '@/scripts/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
-  collection,
-  doc,
-  DocumentData,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  QueryDocumentSnapshot,
-  startAfter,
-  where,
+  collection, doc, DocumentData, getDocs, limit, onSnapshot, orderBy, query,
+  QueryDocumentSnapshot, startAfter, where,
 } from 'firebase/firestore';
 
-/* ---------- Types ---------- */
+/* Local */
+import { LibraryStyles } from '@/components/style/tab/LibraryStyles';
+import { GRADES, PAGE_SIZE, TYPE_ICON, TYPES } from '@/constants/tab/library';
+import { useDebounced } from '@/hooks/common/useDebounced';
+import { computeIsPremium } from '@/utils/subscription';
+
+/* Types */
 type LibraryItem = {
   id: string;
   title: string;
   subtitle?: string;
   grade: number; // 1..12
-  type: 'pdf' | 'video' | 'exercise' | 'note' | 'link';
+  type: (typeof TYPES)[number];
   coverUrl?: string;
   tags?: string[];
-  updatedAt?: any; // Firestore Timestamp | null
+  updatedAt?: any;
   lessonId?: string;
   url?: string;
   sizeMB?: number;
   pages?: number;
   durationSec?: number;
-  premium?: boolean; // <— quan trọng
+  premium?: boolean;
 };
 
-/* ---------- Consts ---------- */
-const PAGE_SIZE = 12;
-const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
-const TYPES: LibraryItem['type'][] = ['pdf', 'video', 'exercise', 'note', 'link'];
-
-const TYPE_ICON: Record<
-  LibraryItem['type'],
-  React.ComponentProps<typeof MaterialCommunityIcons>['name']
-> = {
-  pdf: 'file-pdf-box',
-  video: 'play-circle',
-  exercise: 'atom-variant',
-  note: 'note-text-outline',
-  link: 'link-variant',
-};
-
-const RADIUS = { lg: 16, md: 12, pill: 999 };
-
-/* ---------- Helper: Debounce ---------- */
-function useDebounced<T>(value: T, delay = 350) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return v;
-}
-
-/* ---------- Helper: Tính premium ---------- */
-function computeIsPremium(data: any): boolean {
-  if (!data) return false;
-  if (data.role === 'premium') return true;
-  if (data.premium === true) return true;
-
-  // Nếu có hạn dùng premiumUntil (Firestore Timestamp hoặc Date)
-  try {
-    const until =
-      data.premiumUntil?.toDate?.() ??
-      (data.premiumUntil instanceof Date ? data.premiumUntil : null);
-    if (until && until.getTime() > Date.now()) return true;
-  } catch {}
-
-  // Nếu đồng bộ Stripe vào user doc
-  const s = String(data?.stripe?.subscriptionStatus || '').toLowerCase();
-  if (['active', 'trialing', 'past_due'].includes(s)) return true;
-
-  return false;
-}
-
-/* ---------- UI ---------- */
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { palette, colorScheme } = useTheme();
-  const styles = useMemo(() => makeStyles(palette), [palette]);
+  const styles = useMemo(() => LibraryStyles(palette), [palette]);
 
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,7 +57,7 @@ export default function LibraryScreen() {
   const [isPremium, setIsPremium] = useState<boolean>(false);
   const [showPaywall, setShowPaywall] = useState(false);
 
-  // giữ unsub cho user doc và subscriptions để cleanup
+  // holds unsub
   const userUnsubRef = useRef<null | (() => void)>(null);
   const subsUnsubRef = useRef<null | (() => void)>(null);
 
@@ -130,52 +68,36 @@ export default function LibraryScreen() {
   const [sortBy, setSortBy] = useState<'updatedAt' | 'title'>('updatedAt');
   const debouncedQ = useDebounced(queryText.trim().toLowerCase(), 400);
 
-  /* ---------- Auth + realtime user premium ---------- */
+  /* Auth + realtime premium */
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, (u) => {
       setFirebaseUser(u);
 
-      // cleanup listeners cũ
-      userUnsubRef.current?.();
-      userUnsubRef.current = null;
-      subsUnsubRef.current?.();
-      subsUnsubRef.current = null;
+      userUnsubRef.current?.(); userUnsubRef.current = null;
+      subsUnsubRef.current?.(); subsUnsubRef.current = null;
 
       if (u?.uid) {
-        // 1) Nghe realtime users/{uid}
         const userRef = doc(db, 'users', u.uid);
         userUnsubRef.current = onSnapshot(
           userRef,
-          (snap) => {
-            const data = snap.exists() ? snap.data() : {};
-            setIsPremium(computeIsPremium(data));
-          },
-          (err) => {
-            console.warn('onSnapshot user error', err);
-            setIsPremium(false);
-          }
+          (snap) => setIsPremium(computeIsPremium(snap.exists() ? snap.data() : {})),
+          () => setIsPremium(false)
         );
 
-        // 2) (Tuỳ chọn) nghe subscriptions nếu bạn lưu ở đây
-        // Hãy sửa tên collection và field cho đúng schema của bạn.
-        const LISTEN_SUBSCRIPTIONS = true; // bật/tắt theo nhu cầu
-        if (LISTEN_SUBSCRIPTIONS) {
-          const qSubs = query(
-            collection(db, 'subscriptions'),
-            where('userId', '==', u.uid)
-          );
+        const LISTEN_SUBS = true;
+        if (LISTEN_SUBS) {
+          const qSubs = query(collection(db, 'subscriptions'), where('userId', '==', u.uid));
           subsUnsubRef.current = onSnapshot(
             qSubs,
             (snap) => {
-              let fromSubs = false;
+              let active = false;
               snap.forEach((d) => {
                 const st = String((d.data() as any)?.status || '').toLowerCase();
-                if (['active', 'trialing', 'past_due'].includes(st)) fromSubs = true;
+                if (['active', 'trialing', 'past_due'].includes(st)) active = true;
               });
-              // Hợp nhất: nếu subs active thì chắc chắn premium
-              setIsPremium((prev) => prev || fromSubs);
+              if (active) setIsPremium(true);
             },
-            (err) => console.warn('onSnapshot subscriptions error', err)
+            () => {}
           );
         }
       } else {
@@ -185,31 +107,24 @@ export default function LibraryScreen() {
 
     return () => {
       unsubAuth();
-      userUnsubRef.current?.();
-      subsUnsubRef.current?.();
-      userUnsubRef.current = null;
-      subsUnsubRef.current = null;
+      userUnsubRef.current?.(); userUnsubRef.current = null;
+      subsUnsubRef.current?.(); subsUnsubRef.current = null;
     };
   }, []);
 
-  /* ---------- Build Firestore query ---------- */
+  /* Build query */
   const buildQuery = useCallback(() => {
     const col = collection(db, 'library');
     const parts: any[] = [];
-
     if (grade) parts.push(where('grade', '==', grade));
     if (typeFilter) parts.push(where('type', '==', typeFilter));
-
-    parts.push(
-      orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc')
-    );
+    parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
     parts.push(limit(PAGE_SIZE));
-
     // @ts-ignore
     return query(col, ...parts);
   }, [grade, typeFilter, sortBy]);
 
-  /* ---------- Load first page ---------- */
+  /* Initial load */
   const loadInitial = useCallback(async () => {
     setLoading(true);
     setHasMore(true);
@@ -231,82 +146,64 @@ export default function LibraryScreen() {
       setItems(filtered);
       setHasMore(snap.docs.length === PAGE_SIZE);
       lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
-    } catch (e) {
-      console.warn('loadInitial error', e);
     } finally {
       setLoading(false);
     }
   }, [buildQuery, debouncedQ]);
 
-  /* ---------- Load more (pagination) ---------- */
+  /* Load more */
   const loadMore = useCallback(async () => {
     if (!hasMore || loading || refreshing) return;
     if (!lastDocRef.current) return;
 
-    try {
-      const colRef = collection(db, 'library');
-      const parts: any[] = [];
-      if (grade) parts.push(where('grade', '==', grade));
-      if (typeFilter) parts.push(where('type', '==', typeFilter));
-      parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
-      parts.push(startAfter(lastDocRef.current));
-      parts.push(limit(PAGE_SIZE));
-      const qRef = query(colRef, ...parts);
+    const colRef = collection(db, 'library');
+    const parts: any[] = [];
+    if (grade) parts.push(where('grade', '==', grade));
+    if (typeFilter) parts.push(where('type', '==', typeFilter));
+    parts.push(orderBy(sortBy === 'title' ? 'title' : 'updatedAt', sortBy === 'title' ? 'asc' : 'desc'));
+    parts.push(startAfter(lastDocRef.current));
+    parts.push(limit(PAGE_SIZE));
+    const qRef = query(colRef, ...parts);
 
-      const snap = await getDocs(qRef);
-      const data: LibraryItem[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const snap = await getDocs(qRef);
+    const data: LibraryItem[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
 
-      const filtered = debouncedQ
-        ? data.filter(it =>
-            (it.title || '').toLowerCase().includes(debouncedQ) ||
-            (it.subtitle || '').toLowerCase().includes(debouncedQ) ||
-            (it.tags || []).some(t => t.toLowerCase().includes(debouncedQ))
-          )
-        : data;
+    const filtered = debouncedQ
+      ? data.filter(it =>
+          (it.title || '').toLowerCase().includes(debouncedQ) ||
+          (it.subtitle || '').toLowerCase().includes(debouncedQ) ||
+          (it.tags || []).some(t => t.toLowerCase().includes(debouncedQ))
+        )
+      : data;
 
-      setItems(prev => [...prev, ...filtered]);
-      setHasMore(snap.docs.length === PAGE_SIZE);
-      lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : lastDocRef.current;
-    } catch (e) {
-      console.warn('loadMore error', e);
-    }
+    setItems(prev => [...prev, ...filtered]);
+    setHasMore(snap.docs.length === PAGE_SIZE);
+    lastDocRef.current = snap.docs.length ? snap.docs[snap.docs.length - 1] : lastDocRef.current;
   }, [grade, typeFilter, sortBy, debouncedQ, hasMore, loading, refreshing]);
 
-  /* ---------- Effects ---------- */
   useEffect(() => { loadInitial(); }, [grade, typeFilter, sortBy, debouncedQ]);
 
-  /* ---------- Refresh ---------- */
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadInitial();
     setRefreshing(false);
   }, [loadInitial]);
 
-  /* ---------- Navigation with premium gate ---------- */
+  /* Navigation */
   const openItem = useCallback((item: LibraryItem) => {
     const locked = !!item.premium && !isPremium;
-    if (locked) {
-      setShowPaywall(true);
-      return;
-    }
-    if (item.lessonId) {
-      router.push(`/Learnning/Lesson/${item.lessonId}`);
-      return;
-    }
+    if (locked) return setShowPaywall(true);
+    if (item.lessonId) return router.push(`/Learnning/Lesson/${item.lessonId}`);
     router.push({ pathname: '/(tabs)/Library/Item', params: { id: item.id } });
   }, [isPremium, router]);
 
-  /* ---------- Item UI ---------- */
+  /* Item */
   const renderItem = useCallback(({ item }: { item: LibraryItem }) => {
     const iconName = TYPE_ICON[item.type] || 'file-outline';
     const locked = !!item.premium && !isPremium;
 
     return (
-      <TouchableOpacity
-        onPress={() => openItem(item)}
-        activeOpacity={locked ? 0.8 : 0.9}
-        style={[styles.card, locked && { opacity: 0.6 }]}
-      >
+      <TouchableOpacity onPress={() => openItem(item)} activeOpacity={locked ? 0.8 : 0.9} style={[styles.card, locked && { opacity: 0.6 }]}>
         <View style={styles.cardIcon}>
           <MaterialCommunityIcons name={iconName} size={28} color={palette.text} />
           {locked && (
@@ -318,9 +215,7 @@ export default function LibraryScreen() {
 
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={styles.cardTitle} numberOfLines={1}>
-              {item.title || 'Tài liệu'}
-            </Text>
+            <Text style={styles.cardTitle} numberOfLines={1}>{item.title || 'Tài liệu'}</Text>
             {!!item.premium && (
               <View style={[styles.premiumPill, { backgroundColor: palette.brandSoft, borderColor: palette.pillBorder }]}>
                 <Ionicons name="star" size={12} color={palette.text} />
@@ -328,7 +223,6 @@ export default function LibraryScreen() {
               </View>
             )}
           </View>
-
           <Text style={styles.cardSub} numberOfLines={1}>
             {item.subtitle || `Lớp ${item.grade} • ${item.type}`}
           </Text>
@@ -351,99 +245,84 @@ export default function LibraryScreen() {
 
   const keyExtractor = useCallback((it: LibraryItem) => it.id, []);
 
-  /* ---------- Header ---------- */
-  const ListHeader = useMemo(() => {
-    return (
-      <View style={[styles.headerWrap, { paddingTop: insets.top + 4 }]}>
-        {/* Title row */}
-        <View style={styles.titleRow}>
-          <Text style={styles.title}>Thư viện</Text>
+  /* Header */
+  const ListHeader = useMemo(() => (
+    <View style={[styles.headerWrap, { paddingTop: insets.top + 4 }]}>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Thư viện</Text>
 
-          {/* Premium state */}
-          {isPremium ? (
-            <View style={styles.mePill}>
-              <Ionicons name="shield-checkmark" size={14} color="#10B981" />
-              <Text style={[styles.mePillText, { color: '#10B981' }]}>Đã nâng cấp</Text>
-            </View>
-          ) : (
-            <TouchableOpacity onPress={() => setShowPaywall(true)} style={styles.mePill}>
-              <Ionicons name="star" size={14} color={palette.text} />
-              <Text style={styles.mePillText}>Nâng cấp</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            onPress={() => setSortBy(s => (s === 'updatedAt' ? 'title' : 'updatedAt'))}
-            style={styles.sortBtn}
-          >
-            <Ionicons name="swap-vertical" size={18} color={palette.text} />
-            <Text style={styles.sortText}>{sortBy === 'updatedAt' ? 'Mới nhất' : 'A → Z'}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Upsell banner */}
-        {!isPremium && (
-          <TouchableOpacity onPress={() => setShowPaywall(true)} style={[styles.upsell, { borderColor: palette.cardBorder }]}>
-            <Ionicons name="lock-closed" size={16} color={palette.text} />
-            <Text style={styles.upsellText}>
-              Một số tài liệu nâng cao đã bị khóa. Nâng cấp Premium để mở toàn bộ nội dung.
-            </Text>
-            <Ionicons name="chevron-forward" size={16} color={palette.ionMuted} />
+        {isPremium ? (
+          <View style={styles.mePill}>
+            <Ionicons name="shield-checkmark" size={14} color="#10B981" />
+            <Text style={[styles.mePillText, { color: '#10B981' }]}>Đã nâng cấp</Text>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={() => setShowPaywall(true)} style={styles.mePill}>
+            <Ionicons name="star" size={14} color={palette.text} />
+            <Text style={styles.mePillText}>Nâng cấp</Text>
           </TouchableOpacity>
         )}
 
-        {/* Search */}
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={18} color={palette.ionMuted} />
-          <TextInput
-            placeholder="Tìm tài liệu, tag, chủ đề…"
-            placeholderTextColor={palette.ionMuted}
-            value={queryText}
-            onChangeText={setQueryText}
-            style={styles.searchInput}
-            returnKeyType="search"
-          />
-          {!!queryText && (
-            <TouchableOpacity onPress={() => setQueryText('')}>
-              <Ionicons name="close-circle" size={18} color={palette.ionMuted} />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Grade filter chips */}
-        <FlatList
-          horizontal
-          data={GRADES}
-          keyExtractor={(g) => `g${g}`}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.gradeList}
-          renderItem={({ item: g }) => {
-            const active = grade === g;
-            return (
-              <TouchableOpacity
-                onPress={() => setGrade(prev => (prev === g ? null : g))}
-                style={[
-                  styles.gradeChip,
-                  {
-                    backgroundColor: active ? palette.brand : palette.pillBg,
-                    borderColor: palette.pillBorder,
-                  },
-                ]}
-              >
-                <Text style={[styles.gradeText, { color: active ? '#FFFFFF' : palette.textFaint }]}>
-                  Lớp {g}
-                </Text>
-              </TouchableOpacity>
-            );
-          }}
-          ListHeaderComponent={<View style={{ width: 4 }} />}
-          ListFooterComponent={<View style={{ width: 8 }} />}
-        />
+        <TouchableOpacity onPress={() => setSortBy(s => (s === 'updatedAt' ? 'title' : 'updatedAt'))} style={styles.sortBtn}>
+          <Ionicons name="swap-vertical" size={18} color={palette.text} />
+          <Text style={styles.sortText}>{sortBy === 'updatedAt' ? 'Mới nhất' : 'A → Z'}</Text>
+        </TouchableOpacity>
       </View>
-    );
-  }, [insets.top, queryText, grade, sortBy, styles, palette, isPremium]);
 
-  /* ---------- Empty / Footer ---------- */
+      {!isPremium && (
+        <TouchableOpacity onPress={() => setShowPaywall(true)} style={[styles.upsell, { borderColor: palette.cardBorder }]}>
+          <Ionicons name="lock-closed" size={16} color={palette.text} />
+          <Text style={styles.upsellText}>Một số tài liệu nâng cao đã bị khóa. Nâng cấp Premium để mở toàn bộ nội dung.</Text>
+          <Ionicons name="chevron-forward" size={16} color={palette.ionMuted} />
+        </TouchableOpacity>
+      )}
+
+      <View style={styles.searchBox}>
+        <Ionicons name="search" size={18} color={palette.ionMuted} />
+        <TextInput
+          placeholder="Tìm tài liệu, tag, chủ đề…"
+          placeholderTextColor={palette.ionMuted}
+          value={queryText}
+          onChangeText={setQueryText}
+          style={styles.searchInput}
+          returnKeyType="search"
+        />
+        {!!queryText && (
+          <TouchableOpacity onPress={() => setQueryText('')}>
+            <Ionicons name="close-circle" size={18} color={palette.ionMuted} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <FlatList
+        horizontal
+        data={GRADES}
+        keyExtractor={(g) => `g${g}`}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.gradeList}
+        renderItem={({ item: g }) => {
+          const active = grade === g;
+          return (
+            <TouchableOpacity
+              onPress={() => setGrade(prev => (prev === g ? null : g))}
+              style={[
+                styles.gradeChip,
+                { backgroundColor: active ? palette.brand : palette.pillBg, borderColor: palette.pillBorder },
+              ]}
+            >
+              <Text style={[styles.gradeText, { color: active ? '#FFFFFF' : palette.textFaint }]}>
+                Lớp {g}
+              </Text>
+            </TouchableOpacity>
+          );
+        }}
+        ListHeaderComponent={<View style={{ width: 4 }} />}
+        ListFooterComponent={<View style={{ width: 8 }} />}
+      />
+    </View>
+  ), [insets.top, queryText, grade, sortBy, styles, palette, isPremium]);
+
+  /* Empty / Footer */
   const ListEmpty = useCallback(() => (
     <View style={styles.emptyWrap}>
       {loading ? (
@@ -467,35 +346,21 @@ export default function LibraryScreen() {
     );
   }, [loading, hasMore, items.length, palette]);
 
-  /* ---------- Paywall Modal ---------- */
+  /* Modal */
   const goUpgrade = useCallback(() => {
     setShowPaywall(false);
-    // Điều hướng tới tab Store (nơi thanh toán). Sau khi thanh toán xong,
-    // webhook cập nhật Firestore → onSnapshot ở trên sẽ tự đổi trạng thái.
     router.push('/(tabs)/Store');
-
-    // Tuỳ chọn: Optimistic UI (bật tạm thời rồi để snapshot “xác nhận”)
-    // setIsPremium(true);
   }, [router]);
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar
-        barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={palette.bg}
-      />
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={palette.bg} />
       <View style={styles.container}>
         <FlatList
           data={items}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={palette.brandSoft}
-            />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
           onEndReachedThreshold={0.3}
           onEndReached={loadMore}
           ListHeaderComponent={ListHeader}
@@ -505,7 +370,6 @@ export default function LibraryScreen() {
         />
       </View>
 
-      {/* Modal paywall */}
       <Modal visible={showPaywall} transparent animationType="fade" onRequestClose={() => setShowPaywall(false)}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}>
@@ -514,8 +378,7 @@ export default function LibraryScreen() {
             </View>
             <Text style={styles.modalTitle}>Nội dung Premium</Text>
             <Text style={styles.modalDesc}>
-              Tài liệu này chỉ dành cho tài khoản Premium. Nâng cấp để mở toàn bộ tài liệu nâng cao,
-              không giới hạn.
+              Tài liệu này chỉ dành cho tài khoản Premium. Nâng cấp để mở toàn bộ tài liệu nâng cao, không giới hạn.
             </Text>
 
             <View style={styles.modalRow}>
@@ -532,177 +395,4 @@ export default function LibraryScreen() {
       </Modal>
     </SafeAreaView>
   );
-}
-
-/* ---------- Styles theo theme ---------- */
-function makeStyles(p: Palette) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: p.bg },
-    container: { flex: 1, backgroundColor: p.bg },
-
-    headerWrap: { backgroundColor: p.bg, paddingBottom: 8 },
-    titleRow: {
-      paddingHorizontal: 16,
-      paddingBottom: 8,
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    title: { fontSize: 24, fontWeight: '800', color: p.text, flex: 1 },
-    sortBtn: { flexDirection: 'row', alignItems: 'center', padding: 8 },
-    sortText: { marginLeft: 6, color: p.text, fontWeight: '600' },
-
-    mePill: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: RADIUS.pill,
-      borderWidth: 1,
-      borderColor: p.cardBorder,
-      marginRight: 6,
-      backgroundColor: p.card,
-    },
-    mePillText: { marginLeft: 6, fontWeight: '700', color: p.text },
-
-    // upsell
-    upsell: {
-      marginHorizontal: 16,
-      marginBottom: 8,
-      padding: 10,
-      borderRadius: RADIUS.md,
-      borderWidth: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    upsellText: { flex: 1, color: p.text },
-
-    // search
-    searchBox: {
-      marginHorizontal: 16,
-      marginBottom: 8,
-      borderRadius: RADIUS.md,
-      backgroundColor: p.cardBorder,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 12,
-      height: 44,
-    },
-    searchInput: { flex: 1, marginLeft: 8, color: p.text },
-
-    gradeList: { paddingHorizontal: 12, paddingVertical: 6 },
-    gradeChip: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: RADIUS.pill,
-      marginHorizontal: 4,
-      borderWidth: 1,
-    },
-    gradeText: { fontWeight: '700' },
-
-    // card
-    card: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 14,
-      backgroundColor: p.card,
-      borderRadius: RADIUS.lg,
-      marginHorizontal: 16,
-      marginVertical: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: p.cardBorder,
-      elevation: 0,
-    },
-    cardIcon: {
-      width: 54,
-      height: 54,
-      borderRadius: 14,
-      backgroundColor: p.cardBorder,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 12,
-      position: 'relative',
-    },
-    lockBadge: {
-      position: 'absolute',
-      right: -6,
-      top: -6,
-      width: 22,
-      height: 22,
-      borderRadius: 11,
-      backgroundColor: '#EF4444',
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: p.card,
-    },
-    cardTitle: { fontSize: 16, fontWeight: '700', color: p.text },
-    premiumPill: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-      borderRadius: RADIUS.pill,
-      borderWidth: 1,
-      marginLeft: 8,
-      gap: 4,
-    },
-    premiumText: { fontSize: 11, fontWeight: '800', color: p.text },
-
-    cardSub: { fontSize: 13, color: p.textMuted, marginTop: 2 },
-
-    // tags
-    tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
-    tagChip: {
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      backgroundColor: p.pillBg,
-      borderRadius: RADIUS.pill,
-      marginRight: 6,
-      marginBottom: 6,
-      borderWidth: 1,
-      borderColor: p.pillBorder,
-    },
-    tagText: { fontSize: 11, color: p.textFaint, fontWeight: '600' },
-
-    emptyWrap: { alignItems: 'center', paddingTop: 48 },
-    emptyText: { color: p.textMuted, marginTop: 8 },
-
-    // modal
-    modalBackdrop: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.35)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 20,
-    },
-    modalCard: {
-      width: '100%',
-      maxWidth: 420,
-      borderRadius: 16,
-      borderWidth: 1,
-      padding: 16,
-    },
-    modalIcon: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: p.cardBorder,
-      alignSelf: 'center',
-      marginBottom: 12,
-    },
-    modalTitle: { fontSize: 18, fontWeight: '800', color: p.text, textAlign: 'center' },
-    modalDesc: { color: p.textMuted, marginTop: 6, textAlign: 'center' },
-    modalRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
-    modalBtn: {
-      flex: 1,
-      paddingVertical: 12,
-      borderRadius: 12,
-      alignItems: 'center',
-      borderWidth: 1,
-    },
-    modalBtnText: { fontWeight: '800' },
-  });
 }
