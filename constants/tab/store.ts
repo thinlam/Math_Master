@@ -1,5 +1,6 @@
 // constants/tab/store.ts
 import { Ionicons } from '@expo/vector-icons';
+import { Platform } from 'react-native';
 
 export type Provider = 'iap' | 'momo' | 'zalopay' | 'vnpay';
 

@@ -1,5 +1,3 @@
-// app/(admin)/home.tsx
-
 /* ---------- Imports ---------- */
 import { db } from '@/scripts/firebase';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,7 +9,7 @@ import {
   limit,
   orderBy,
   query,
-  Timestamp
+  Timestamp,
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -26,34 +24,35 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-/* ---------- Types ---------- */
-type QuickStat = {
-  key: 'users' | 'lessons' | 'reports' | 'subscriptions';
-  label: string;
-  value: number;
-  icon:
-    | React.ComponentProps<typeof Ionicons>['name']
-    | React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  color: string;
-  bg: string;
-  iconLib?: 'ion' | 'mci';
-};
+/* Styles + Subcomponents */
+import QuickAction from '@/components/admin/home/QuickAction';
+import RecentListSimple from '@/components/admin/home/RecentListSimple';
+import Section from '@/components/admin/home/Section';
+import { AdminHomeStyles as s } from '@/components/style/admin/AdminHomeStyles';
 
-type RecentItem = {
+/* ---------- Types ---------- */
+export type RecentItem = {
   id: string;
   title: string;
   subtitle?: string;
-  /** có thể là Timestamp | Date | string | null (khi serverTimestamp chưa resolve) */
   createdAt?: any;
   type: 'user' | 'lesson' | 'report' | 'subscription';
   role?: 'admin' | 'premium' | 'user' | string;
-
-  // fields riêng cho subscription (nếu type === 'subscription')
   planId?: string;
   status?: 'active' | 'cancelled' | 'expired' | string;
   uid?: string;
   startedAt?: any;
   expiresAt?: any;
+};
+
+type QuickStat = {
+  key: 'users' | 'lessons' | 'reports' | 'subscriptions';
+  label: string;
+  value: number;
+  icon: React.ComponentProps<typeof Ionicons>['name'] | React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  color: string;
+  bg: string;
+  iconLib?: 'ion' | 'mci';
 };
 
 /* ---------- Utils: chuẩn hoá ngày ---------- */
@@ -65,15 +64,18 @@ function safeDate(ts: any): Date | null {
     const d = new Date(ts);
     return isNaN(d.getTime()) ? null : d;
   }
-  // FieldValue (serverTimestamp) hoặc kiểu lạ -> bỏ qua
   return null;
 }
 
-function formatDate(tsLike: any) {
+export function formatDate(tsLike: any) {
   const d = safeDate(tsLike);
   if (!d) return '—';
-  const dd = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-  const hh = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const dd = `${String(d.getDate()).padStart(2, '0')}/${String(
+    d.getMonth() + 1,
+  ).padStart(2, '0')}/${d.getFullYear()}`;
+  const hh = `${String(d.getHours()).padStart(2, '0')}:${String(
+    d.getMinutes(),
+  ).padStart(2, '0')}`;
   return `${hh} • ${dd}`;
 }
 
@@ -85,7 +87,7 @@ export default function AdminHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [stats, setStats] = useState<{ users: number; lessons: number; reports: number; subscriptions: number }>({
+  const [stats, setStats] = useState({
     users: 0,
     lessons: 0,
     reports: 0,
@@ -119,7 +121,6 @@ export default function AdminHome() {
       const recentUsersQ = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(5));
       const recentLessonsQ = query(collection(db, 'lessons'), orderBy('createdAt', 'desc'), limit(5));
       const recentReportsQ = query(collection(db, 'reports'), orderBy('createdAt', 'desc'), limit(5));
-      // Subscriptions nên order theo startedAt (nếu bạn lưu createdAt thì có thể dùng createdAt)
       const recentSubsQ = query(collection(db, 'subscriptions'), orderBy('startedAt', 'desc'), limit(5));
 
       const [uDocs, lDocs, rDocs, sDocs] = await Promise.all([
@@ -138,9 +139,9 @@ export default function AdminHome() {
             subtitle: data.email ?? undefined,
             createdAt: data.createdAt ?? null,
             type: 'user',
-            role: (data.role as RecentItem['role']) || 'user',
-          } satisfies RecentItem;
-        })
+            role: (data.role as any) || 'user',
+          };
+        }),
       );
 
       setRecentLessons(
@@ -152,8 +153,8 @@ export default function AdminHome() {
             subtitle: data.grade ? `Lớp ${data.grade}` : undefined,
             createdAt: data.createdAt ?? null,
             type: 'lesson',
-          } satisfies RecentItem;
-        })
+          };
+        }),
       );
 
       setRecentReports(
@@ -165,8 +166,8 @@ export default function AdminHome() {
             subtitle: data.reason ?? data.status ?? undefined,
             createdAt: data.createdAt ?? null,
             type: 'report',
-          } satisfies RecentItem;
-        })
+          };
+        }),
       );
 
       setRecentSubs(
@@ -183,11 +184,10 @@ export default function AdminHome() {
             uid: data.uid ?? undefined,
             startedAt: data.startedAt ?? null,
             expiresAt: data.expiresAt ?? null,
-          } satisfies RecentItem;
-        })
+          };
+        }),
       );
     } catch (e: any) {
-      console.error(e);
       Alert.alert('Lỗi', e?.message ?? 'Không tải được dữ liệu admin.');
     } finally {
       setLoading(false);
@@ -204,7 +204,7 @@ export default function AdminHome() {
     setRefreshing(false);
   }, [loadData]);
 
-  /* ---------- Quick Stats Data ---------- */
+  /* ---------- Quick Stats ---------- */
   const quickStats: QuickStat[] = useMemo(
     () => [
       {
@@ -244,7 +244,7 @@ export default function AdminHome() {
         iconLib: 'ion',
       },
     ],
-    [stats]
+    [stats],
   );
 
   const paddingTop = Math.max(insets.top - 8, 0);
@@ -252,29 +252,21 @@ export default function AdminHome() {
 
   /* ---------- Render ---------- */
   return (
-    <View style={{ flex: 1, backgroundColor: '#0b1220' }}>
+    <View style={s.root}>
       <StatusBar
         translucent
         barStyle="light-content"
         backgroundColor={Platform.select({ android: 'transparent', ios: 'transparent' })}
       />
 
-      {/* Dùng FlatList cha (VirtualizedList) để cuộn toàn trang - KHÔNG có FlatList con */}
       <FlatList
         data={[]}
         keyExtractor={() => 'header-only'}
         ListHeaderComponent={
           <View style={{ paddingHorizontal: 16, paddingTop, paddingBottom }}>
-            {/* ---------- Header ---------- */}
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 10,
-              }}
-            >
-              <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Bảng điều khiển</Text>
+            {/* Header */}
+            <View style={s.header}>
+              <Text style={s.headerTitle}>Bảng điều khiển</Text>
               <TouchableOpacity
                 onPress={() => go(router, 'settings')}
                 style={{ padding: 8, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}
@@ -283,53 +275,29 @@ export default function AdminHome() {
               </TouchableOpacity>
             </View>
 
-            {/* ---------- Quick Stats ---------- */}
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-              {quickStats.map((s) => (
-                <View
-                  key={s.key}
-                  style={{
-                    flexGrow: 1,
-                    minWidth: '47%',
-                    backgroundColor: 'rgba(255,255,255,0.06)',
-                    borderRadius: 16,
-                    padding: 14,
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.12)',
-                  }}
-                >
+            {/* Quick Stats */}
+            <View style={s.quickStatsWrap}>
+              {quickStats.map((sItem) => (
+                <View key={sItem.key} style={s.quickStatCard}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <View style={{ backgroundColor: s.bg, padding: 8, borderRadius: 12 }}>
-                      {s.iconLib === 'mci' ? (
-                        <MaterialCommunityIcons name={s.icon as any} size={18} color={s.color} />
+                    <View style={{ backgroundColor: sItem.bg, padding: 8, borderRadius: 12 }}>
+                      {sItem.iconLib === 'mci' ? (
+                        <MaterialCommunityIcons name={sItem.icon as any} size={18} color={sItem.color} />
                       ) : (
-                        <Ionicons name={s.icon as any} size={18} color={s.color} />
+                        <Ionicons name={sItem.icon as any} size={18} color={sItem.color} />
                       )}
                     </View>
-                    <Text style={{ color: '#cbd5e1', fontSize: 13 }}>{s.label}</Text>
+                    <Text style={s.quickStatLabel}>{sItem.label}</Text>
                   </View>
-                  <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 6 }}>
-                    {loading ? '...' : s.value}
-                  </Text>
+                  <Text style={s.quickStatValue}>{loading ? '…' : sItem.value}</Text>
                 </View>
               ))}
             </View>
 
-            {/* ---------- Quick Actions ---------- */}
-            <View
-              style={{
-                backgroundColor: 'rgba(255,255,255,0.06)',
-                borderRadius: 16,
-                padding: 14,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.12)',
-                marginBottom: 12,
-              }}
-            >
-              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 }}>
-                Tác vụ nhanh
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+            {/* Quick Actions */}
+            <View style={s.quickActionWrap}>
+              <Text style={s.quickActionTitle}>Tác vụ nhanh</Text>
+              <View style={s.quickActionRow}>
                 <QuickAction icon="person-outline" label="Quản lý user" onPress={() => go(router, 'users')} />
                 <QuickAction icon="book-outline" label="Quản lý bài học" onPress={() => go(router, 'lessons')} />
                 <QuickAction icon="warning-outline" label="Xử lý báo cáo" onPress={() => go(router, 'reports')} />
@@ -337,18 +305,11 @@ export default function AdminHome() {
                 <QuickAction icon="megaphone-outline" label="Thông báo" onPress={() => go(router, 'announcements')} />
                 <QuickAction icon="settings-outline" label="Cấu hình" onPress={() => go(router, 'admin-config')} />
                 <QuickAction icon="library-outline" label="Quản lý Library" onPress={() => go(router, 'library')} />
-                {/* NEW: Quản lý gói */}
                 <QuickAction icon="star-outline" label="Quản lý gói" onPress={() => go(router, 'subscriptions')} />
-                <QuickAction icon = "time" label= "Quick " onPress={() => router.push('/(admin)/quick')} />
-                <QuickAction icon = "speedometer" label= "Speed" onPress={() =>  go(router, 'speed')} />
               </View>
             </View>
 
-            {/* ---------- Recent Lists ---------- */}
-            {/* <Section title="Gói Premium gần đây" actionLabel="Xem tất cả" onAction={() => go(router, 'subscriptions')}>
-              <RecentSubList data={recentSubs} empty="Chưa có gói nào." />
-            </Section> */}
-
+            {/* Recent Data */}
             <Section title="Bài học mới" actionLabel="Xem tất cả" onAction={() => go(router, 'lessons')}>
               <RecentListSimple data={recentLessons} empty="Chưa có dữ liệu." />
             </Section>
@@ -358,46 +319,26 @@ export default function AdminHome() {
             </Section>
           </View>
         }
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
         contentContainerStyle={{ paddingBottom: 16 + insets.bottom }}
       />
 
-      {/* ---------- Floating Action Button ---------- */}
+      {/* FAB */}
       <TouchableOpacity
         onPress={() => router.push('/(admin)/lessons/create')}
-        style={{
-          position: 'absolute',
-          right: 18,
-          bottom: 18 + insets.bottom,
-          backgroundColor: '#3b82f6',
-          borderRadius: 28,
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: 18,
-          height: 56,
-          flexDirection: 'row',
-          gap: 8,
-          shadowColor: '#000',
-          shadowOpacity: 0.25,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-        }}
-        accessibilityRole="button"
-        accessibilityLabel="Thêm bài học"
+        style={[s.fab, { bottom: 18 + insets.bottom }]}
       >
         <Ionicons name="add" color="#fff" size={22} />
-        <Text style={{ color: '#fff', fontWeight: '700' }}>Thêm bài học</Text>
+        <Text style={s.fabText}>Thêm bài học</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-/* ---------- Sub Components ---------- */
+/* ---------- Navigation Helper ---------- */
 function go(
   router: ReturnType<typeof useRouter>,
-  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config' | 'library' | 'subscriptions'|'speed'
+  dest: 'users' | 'lessons' | 'reports' | 'settings' | 'announcements' | 'analytics' | 'admin-config' | 'library' | 'subscriptions',
 ) {
   switch (dest) {
     case 'users': router.push('../users'); break;
@@ -409,172 +350,5 @@ function go(
     case 'admin-config': router.push('/(admin)/admin-config'); break;
     case 'library': router.push('/(admin)/library'); break;
     case 'subscriptions': router.push('/(admin)/subscriptions'); break;
-    case 'speed' : router.push('../speed'); break; // <-- NEW
   }
-}
-
-function QuickAction({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: React.ComponentProps<typeof Ionicons>['name'];
-  label: string;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        borderRadius: 12,
-        backgroundColor: 'rgba(255,255,255,0.04)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-      }}
-    >
-      <Ionicons name={icon} size={16} color="#93c5fd" />
-      <Text style={{ color: '#e5e7eb', fontWeight: '600' }}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function Section({
-  title,
-  children,
-  actionLabel,
-  onAction,
-}: {
-  title: string;
-  children: React.ReactNode;
-  actionLabel?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <View
-      style={{
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderRadius: 16,
-        padding: 14,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        marginBottom: 12,
-      }}
-    >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{title}</Text>
-        {actionLabel && onAction && (
-          <TouchableOpacity onPress={onAction} style={{ paddingVertical: 4, paddingHorizontal: 8 }}>
-            <Text style={{ color: '#93c5fd', fontWeight: '700' }}>{actionLabel}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      {children}
-    </View>
-  );
-}
-
-/** Danh sách hiển thị đơn giản (không FlatList con) để tránh nested VirtualizedList */
-function RecentListSimple({ data, empty }: { data: RecentItem[]; empty: string }) {
-  if (!data.length) return <Text style={{ color: '#94a3b8' }}>{empty}</Text>;
-  return (
-    <View>
-      {data.map((item, idx) => (
-        <View key={item.id}>
-          <View
-            style={{
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              borderRadius: 12,
-              padding: 12,
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.1)',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <Text style={{ color: '#e2e8f0', fontWeight: '700', flex: 1 }}>{item.title}</Text>
-              {item.type === 'user' && <RoleBadge role={(item.role as any) ?? 'user'} />}
-            </View>
-            {!!item.subtitle && <Text style={{ color: '#94a3b8', marginTop: 2 }}>{item.subtitle}</Text>}
-            <Text style={{ color: '#64748b', marginTop: 4, fontSize: 12 }}>
-              {formatDate(item.createdAt)}
-            </Text>
-          </View>
-          {idx < data.length - 1 && <View style={{ height: 8 }} />}
-        </View>
-      ))}
-    </View>
-  );
-}
-
-/** Danh sách subscription gần đây (không dùng FlatList con) */
-function RecentSubList({ data, empty }: { data: RecentItem[]; empty: string }) {
-  if (!data.length) return <Text style={{ color: '#94a3b8' }}>{empty}</Text>;
-  return (
-    <View>
-      {data.map((s, idx) => (
-        <View key={s.id}>
-          <View
-            style={{
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              borderRadius: 12,
-              padding: 12,
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.1)',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <Text style={{ color: '#e2e8f0', fontWeight: '700', flex: 1 }}>
-                {s.planId ?? s.title}
-              </Text>
-              <SubStatusBadge status={s.status ?? 'active'} />
-            </View>
-            <Text style={{ color: '#94a3b8', marginTop: 2 }}>
-              UID: {s.uid ?? '—'}
-            </Text>
-            <Text style={{ color: '#64748b', marginTop: 4, fontSize: 12 }}>
-              {`Bắt đầu: ${formatDate(s.startedAt)} • Hết hạn: ${formatDate(s.expiresAt)}`}
-            </Text>
-          </View>
-          {idx < data.length - 1 && <View style={{ height: 8 }} />}
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function RoleBadge({ role }: { role: string }) {
-  const map: Record<
-    string,
-    { label: string; bg: string; color: string; icon: React.ComponentProps<typeof Ionicons>['name'] }
-  > = {
-    admin:   { label: 'Admin',   bg: 'rgba(239,68,68,0.15)',  color: '#ef4444', icon: 'shield-checkmark-outline' },
-    premium: { label: 'Premium', bg: 'rgba(168,85,247,0.15)', color: '#a855f7', icon: 'star-outline' },
-    user:    { label: 'User',    bg: 'rgba(148,163,184,0.15)',color: '#94a3b8', icon: 'person-outline' },
-  };
-  const style = map[role] ?? map.user;
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: style.bg }}>
-      <Ionicons name={style.icon} size={14} color={style.color} />
-      <Text style={{ color: style.color, fontWeight: '700', fontSize: 12 }}>{style.label}</Text>
-    </View>
-  );
-}
-
-function SubStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; bg: string; color: string; icon: React.ComponentProps<typeof Ionicons>['name'] }> = {
-    active:    { label: 'Active',    bg: 'rgba(22,163,74,0.15)',  color: '#16a34a', icon: 'checkmark-circle-outline' },
-    cancelled: { label: 'Cancelled', bg: 'rgba(234,179,8,0.15)', color: '#eab308', icon: 'pause-circle-outline' },
-    expired:   { label: 'Expired',   bg: 'rgba(107,114,128,0.15)', color: '#6b7280', icon: 'time-outline' },
-  };
-  const style = map[status] ?? map.active;
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: style.bg }}>
-      <Ionicons name={style.icon} size={14} color={style.color} />
-      <Text style={{ color: style.color, fontWeight: '700', fontSize: 12 }}>{style.label}</Text>
-    </View>
-  );
 }
