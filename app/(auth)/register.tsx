@@ -106,7 +106,7 @@ export default function SignUpScreen() {
                 // CHÚ Ý: nếu file này nằm trong app/(auth)/ hãy để ../../assets/...
                 source={require('../../assets/images/icon_math_resized.png')}
                 onError={() => setUseLogoFallback(true)}
-                style={[S.logo, { opacity: darkMode ? 0.95 : 1 }]}
+                style={[S.logo, { opacity: darkMode ? 0.95 : 1,width: 150, height: 150,borderRadius: 200 }]}// bo tròn 
               />
             )}
 

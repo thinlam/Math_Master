@@ -159,7 +159,7 @@ export default function LoginScreen() {
               <Image
                 source={require('../../assets/images/icon_math_resized.png')}
                 onError={() => setUseLogoFallback(true)}
-                style={[S.logo, { opacity: darkMode ? 0.95 : 1 }]}
+                style={[S.logo, { opacity: darkMode ? 0.95 : 1,width: 200, height: 200,borderRadius: 200 }]}  // bo tròn 
               />
             )}
             <Text style={[S.title, { color: T.text }]}>Đăng nhập</Text>
