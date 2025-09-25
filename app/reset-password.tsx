@@ -3,14 +3,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, KeyboardAvoidingView, Platform, SafeAreaView, StatusBar,
+  Alert, KeyboardAvoidingView, Platform, StatusBar,
   Text, TextInput, TouchableOpacity, useColorScheme, View,
 } from 'react-native';
 
 import { ResetStaticStyles as S, themedTokens as TT } from '@/components/style/auth/ResetStyles';
 import { fetchWithTimeout } from '@/constants/auth/otp'; // đã có sẵn ở màn Forgot
 import { ACCOUNT, ENDPOINTS, LOGIN_PATH } from '@/constants/auth/reset';
-
+import { SafeAreaView } from 'react-native-safe-area-context';
 export default function ResetPasswordScreen() {
   const { email, account } = useLocalSearchParams<{ email?: string; account?: string }>();
   const router = useRouter();
