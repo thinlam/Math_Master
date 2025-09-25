@@ -324,13 +324,13 @@ export default function AdminHome() {
       />
 
       {/* FAB */}
-      <TouchableOpacity
+      {/* <TouchableOpacity
         onPress={() => router.push('/(admin)/lessons/create')}
         style={[s.fab, { bottom: 18 + insets.bottom }]}
       >
         <Ionicons name="add" color="#fff" size={22} />
         <Text style={s.fabText}>Thêm bài học</Text>
-      </TouchableOpacity>
+      </TouchableOpacity> */}
     </View>
   );
 }

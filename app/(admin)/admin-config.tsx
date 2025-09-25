@@ -8,6 +8,7 @@ import {
   StatusBar,
   Switch,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,7 +40,11 @@ export default function AdminConfigScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [cfg, setCfg] = useState<AdminConfig>({ maintenance: false, minVersion: null, bannerText: null });
+  const [cfg, setCfg] = useState<AdminConfig>({
+    maintenance: false,
+    minVersion: null,
+    bannerText: null,
+  });
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 

@@ -75,7 +75,6 @@ export default function LearnScreen() {
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
 
-  // ✅ đọc lớp từ AsyncStorage khi màn hình focus
   const resolveGrade = useCallback(async () => {
     try {
       const stored = await AsyncStorage.getItem('selectedGrade');
@@ -159,7 +158,7 @@ export default function LearnScreen() {
 
   const onPressLesson = useCallback(
     (it: Lesson) => {
-      router.push(`/(tabs)/Learnning/Lesson/${it.id}`);
+      router.push(`/(tabs)/Learnning/Lesson/${it.id}`); // ✅ fixed
     },
     [router]
   );
@@ -187,7 +186,7 @@ export default function LearnScreen() {
         <View style={{ flex: 1, alignItems: 'center' }}>
           <Text style={styles.headerTitle}>Học theo lớp</Text>
           <Text style={styles.headerSub}>
-            {grade == null ? 'Đang xác định lớp…' : `Lớp ${grade} • Bắt đầu luyện tập`}
+            {grade == null ? 'Đang xác định lớp…' : `Lớp ${String(grade)} • Bắt đầu luyện tập`}
           </Text>
         </View>
 
@@ -277,19 +276,19 @@ function LessonCard({
               {lesson.title}
             </Text>
             <Text style={{ color: palette.textMuted, marginTop: 4 }}>
-              Lớp {lesson.grade} {lesson.unit ? `• ${lesson.unit}` : ''}
+              Lớp {String(lesson.grade)}{lesson.unit ? ` • ${lesson.unit}` : ''}
             </Text>
           </View>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+          
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, justifyContent: 'flex-end' }}>
             <Badge icon="barbell-outline" label={`Độ khó: ${diffLabel}`} palette={palette} />
             <View style={{ width: 8 }} />
             <Badge icon="help-circle-outline" label={`${lesson.questionCount ?? 0} câu`} palette={palette} />
             {updated ? (
-              <>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <View style={{ width: 8 }} />
-                <Badge icon="time-outline" label={fmtDate(updated)} palette={palette} />
-              </>
+                {/* <Badge icon="time-outline" label={fmtDate(updated)} palette={palette} /> */}
+              </View>
             ) : null}
           </View>
         </View>
@@ -364,7 +363,6 @@ function makeStyles(p: Palette) {
     changeBtnText: { color: p.textFaint, fontSize: 12, fontWeight: '600' },
     centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     loadingText: { color: p.textMuted, marginTop: 8 },
-
     emptyTitle: { color: p.text, fontSize: 16, marginTop: 6, fontWeight: '600' },
     emptySub: { color: p.textMuted, marginTop: 4 },
   });

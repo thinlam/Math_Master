@@ -1,36 +1,35 @@
 // app/(admin)/lessons/create.tsx
 
 /* ---------- Imports ---------- */
-import { auth, db, storage } from '@/scripts/firebase';
+import { auth, db } from '@/scripts/firebase'; // ⬅️ Không dùng storage nữa
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
-    collection,
-    doc,
-    getDoc,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    StatusBar,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    useWindowDimensions,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -60,7 +59,7 @@ type Lesson = {
   chapter?: string;
   unit?: string;
   topicType?: string;
-  difficulty: 'easy' | 'med' | 'hard' | 'mix';
+  difficulty: 'easy' | 'med' | 'hard'; // ⬅️ bỏ 'mix'
   timeLimitMin?: number;
   objectives: string[];
   tags: string[];
@@ -79,7 +78,6 @@ const DIFFS = [
   { key: 'easy', label: 'Dễ' },
   { key: 'med', label: 'Trung bình' },
   { key: 'hard', label: 'Khó' },
-  { key: 'mix', label: 'Trộn' },
 ] as const;
 
 const Q_TYPES = [
@@ -94,29 +92,62 @@ function uid() {
   return Math.random().toString(36).slice(2, 9);
 }
 
+/* ===== Cloudinary ENV ===== */
+// 🔥 Thay vì lấy từ process.env, bạn viết thẳng ra:
+const CLOUD_NAME = "djf9vnngm";              // cloud_name của bạn
+const CLOUD_PRESET = "unsigned_mobile";     // preset unsigned vừa tạo
+const CLOUD_FOLDER = "lessons";
+ // Folder mặc định muốn lưu
+
+
+async function uploadToCloudinary(localUri: string, folder: string) {
+  const ext = (localUri.split("?")[0].split(".").pop() || "jpg").toLowerCase();
+  const mime =
+    ext === "png" ? "image/png" :
+    ext === "webp" ? "image/webp" :
+    "image/jpeg";
+
+  const data = new FormData();
+  data.append("file", {
+    uri: localUri,
+    name: `mm_${Date.now()}.${ext}`,
+    type: mime,
+  } as any);
+  data.append("upload_preset", CLOUD_PRESET);
+data.append("folder", `${CLOUD_FOLDER}/${folder}`);
+
+
+  const url = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`;
+const res = await fetch(url, { method: "POST", body: data });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Cloudinary upload failed (${res.status}): ${txt}`);
+  }
+  const json = await res.json();
+  return json.secure_url as string;
+}
+
 async function pickImageAndUpload(pathPrefix: string) {
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (perm.status !== 'granted') {
     Alert.alert('Quyền bị từ chối', 'Cần quyền truy cập ảnh để tải lên.');
     return undefined;
   }
-  // ✅ dùng API mới để tránh cảnh báo
   const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: [ImagePicker.MediaType.Image],
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
     allowsEditing: true,
     quality: 0.8,
   });
   if (result.canceled || !result.assets?.length) return undefined;
 
   const asset = result.assets[0];
-  const blob = await (await fetch(asset.uri)).blob();
-  const fileRef = ref(
-    storage,
-    `${pathPrefix}/${Date.now()}_${asset.fileName || 'img'}.jpg`,
-  );
-  await uploadBytes(fileRef, blob);
-  const url = await getDownloadURL(fileRef);
-  return url;
+  try {
+    const url = await uploadToCloudinary(asset.uri, pathPrefix);
+    return url;
+  } catch (e: any) {
+    Alert.alert('Lỗi upload', e?.message ?? 'Không thể tải ảnh lên Cloudinary.');
+    return undefined;
+  }
 }
 
 /* ---------- Hook: chiều cao bàn phím ---------- */
@@ -158,7 +189,7 @@ export default function CreateLessonScreen() {
   const [unit, setUnit] = useState('');
   const [topicType, setTopicType] = useState('');
   const [difficulty, setDifficulty] =
-    useState<Lesson['difficulty']>('mix');
+    useState<Lesson['difficulty']>('med'); // default 'med'
   const [timeLimitMin, setTimeLimitMin] = useState<string>('20');
   const [objectives, setObjectives] = useState<string>(
     'Củng cố cộng trừ trong phạm vi 100',
@@ -166,8 +197,8 @@ export default function CreateLessonScreen() {
   const [tags, setTags] = useState<string>('cộng trừ, lớp 1');
   const [content, setContent] = useState('');
 
-  // Settings
-  // ✅ undefined: chưa đụng tới (không ghi xuống DB). null: ghi xoá ảnh. string: URL.
+  // Settings (cover image)
+  // undefined: chưa đụng; null: sẽ xoá; string: URL
   const [coverImage, setCoverImage] = useState<string | null | undefined>(
     undefined,
   );
@@ -181,7 +212,7 @@ export default function CreateLessonScreen() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(!!editId);
 
-  // Picker lists
+  // Pickers data
   const gradeItems = useMemo(
     () =>
       Array.from({ length: 12 }, (_, i) => ({
@@ -236,12 +267,13 @@ export default function CreateLessonScreen() {
         setChapter(d.chapter || '');
         setUnit(d.unit || '');
         setTopicType(d.topicType || '');
-        setDifficulty(d.difficulty || 'mix');
+        // map 'mix' -> 'med'
+        const diff = (d.difficulty as any) || 'med';
+        setDifficulty(diff === 'mix' ? 'med' : diff);
         setTimeLimitMin(d.timeLimitMin ? String(d.timeLimitMin) : '');
         setObjectives(d.objectives?.join(', ') || '');
         setTags(d.tags?.join(', ') || '');
         setContent(d.content || '');
-        // nếu không có field, set null để UI hiển thị “chưa có”, nhưng vẫn cho phép clear
         setCoverImage(
           Object.prototype.hasOwnProperty.call(d, 'coverImage')
             ? (d.coverImage as any)
@@ -289,7 +321,7 @@ export default function CreateLessonScreen() {
     const err = validate();
     if (err) return Alert.alert('Thiếu', err);
 
-    // Chỉ làm sạch dữ liệu người dùng nhập (loại undefined trong mảng/object lồng nhau)
+    // làm sạch dữ liệu user nhập (loại undefined trong mảng/object lồng nhau)
     const sanitizeUserData = (val: any): any => {
       if (Array.isArray(val))
         return val.map(sanitizeUserData).filter((v) => v !== undefined);
@@ -313,10 +345,9 @@ export default function CreateLessonScreen() {
       };
       if (bookEdition.trim()) _book.edition = bookEdition.trim();
 
-      // questions: loại bỏ undefined trong options/answers/steps/…
+      // questions: loại bỏ undefined trong options/answers/steps/… (nhưng giữ null nếu có)
       const sanitizedQuestions = sanitizeUserData(questions);
 
-      // Tạo payload — KHÔNG sanitize cả object để tránh đụng serverTimestamp()
       const lesson = {
         title: title.trim(),
         grade: Number(grade),
@@ -335,7 +366,7 @@ export default function CreateLessonScreen() {
         updatedAt: serverTimestamp(),
         ...(timeLimitMin ? { timeLimitMin: Number(timeLimitMin) } : {}),
         ...(content.trim() ? { content: content.trim() } : {}),
-        // ✅ chỉ ghi khi người dùng đã tác động: string/null sẽ được ghi, undefined thì bỏ qua
+        // chỉ ghi khi người dùng đã tác động: string/null sẽ được ghi, undefined thì bỏ qua
         ...(coverImage !== undefined ? { coverImage } : {}),
         ...(editId ? {} : { createdAt: serverTimestamp() }),
       };
@@ -357,6 +388,26 @@ export default function CreateLessonScreen() {
       setSaving(false);
     }
   };
+
+  /* ---------- Question menu state ---------- */
+  type QMenuState = { visible: boolean; qid?: string; index?: number };
+  const [qMenu, setQMenu] = useState<QMenuState>({ visible: false });
+  function openQMenu(qid: string, index: number) {
+    setQMenu({ visible: true, qid, index });
+  }
+  function closeQMenu() {
+    setQMenu({ visible: false });
+  }
+  function duplicateQuestion(id: string) {
+    setQuestions(prev => {
+      const idx = prev.findIndex(q => q.id === id);
+      if (idx < 0) return prev;
+      const clone = JSON.parse(JSON.stringify(prev[idx])) as Question;
+      clone.id = uid();
+      if (clone.options) clone.options = clone.options.map(o => ({ ...o, id: uid() }));
+      return [...prev.slice(0, idx + 1), clone, ...prev.slice(idx + 1)];
+    });
+  }
 
   /* ---------- Render ---------- */
   if (loading) {
@@ -474,7 +525,7 @@ export default function CreateLessonScreen() {
             <Text style={labelStyle}>Độ khó</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {DIFFS.map((d) => (
-                <Chip key={d.key} selected={difficulty === d.key} onPress={() => setDifficulty(d.key)}>
+                <Chip key={d.key} selected={difficulty === d.key} onPress={() => setDifficulty(d.key as Lesson['difficulty'])}>
                   {d.label}
                 </Chip>
               ))}
@@ -565,9 +616,8 @@ export default function CreateLessonScreen() {
                     Câu {index + 1} • {Q_TYPES.find((t) => t.key === item.type)?.label}
                   </Text>
                   <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <IconBtn name="arrow-up" onPress={() => moveQuestion(item.id, -1)} />
-                    <IconBtn name="arrow-down" onPress={() => moveQuestion(item.id, 1)} />
-                    <IconBtn name="trash" onPress={() => removeQuestion(item.id)} />
+                    {/* Kebab menu */}
+                    <IconBtn name="ellipsis-horizontal" onPress={() => openQMenu(item.id, index)} />
                   </View>
                 </View>
 
@@ -981,6 +1031,19 @@ export default function CreateLessonScreen() {
           <Text style={{ color: '#fff', fontWeight: '700' }}>Ẩn bàn phím</Text>
         </TouchableOpacity>
       )}
+
+      {/* Action Menu cho câu hỏi */}
+      <ActionMenu
+        visible={qMenu.visible}
+        title={`Câu ${(qMenu.index ?? 0) + 1} – thao tác`}
+        options={[
+          { label: 'Di chuyển lên',    onPress: () => qMenu.qid && moveQuestion(qMenu.qid, -1) },
+          { label: 'Di chuyển xuống',  onPress: () => qMenu.qid && moveQuestion(qMenu.qid,  1) },
+          { label: 'Nhân bản',         onPress: () => qMenu.qid && duplicateQuestion(qMenu.qid) },
+          { label: 'Xoá câu hỏi',      destructive: true, onPress: () => qMenu.qid && removeQuestion(qMenu.qid) },
+        ]}
+        onClose={closeQMenu}
+      />
     </KeyboardAvoidingView>
   );
 
@@ -1210,7 +1273,7 @@ function WheelPickerModal({
   onChange: (v: any) => void;
 }) {
   const { height } = useWindowDimensions();
-  const panelH = Math.min(height * 0.48, 420); // gọn, tránh đè bàn phím
+  const panelH = Math.min(height * 0.48, 420);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
@@ -1264,6 +1327,68 @@ function WheelPickerModal({
           </Picker>
         </SafeAreaView>
       </View>
+    </Modal>
+  );
+}
+
+function ActionMenu({
+  visible,
+  title,
+  options,
+  onClose,
+}: {
+  visible: boolean;
+  title?: string;
+  options: { label: string; onPress: () => void; destructive?: boolean }[];
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={onClose}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+      >
+        <SafeAreaView
+          style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            paddingBottom: 8,
+            overflow: 'hidden',
+          }}
+        >
+          {!!title && (
+            <Text style={{ color: '#fff', fontWeight: '800', padding: 16, paddingBottom: 8 }}>
+              {title}
+            </Text>
+          )}
+          {options.map((opt, i) => (
+            <TouchableOpacity
+              key={i}
+              onPress={() => { opt.onPress(); onClose(); }}
+              style={{
+                paddingVertical: 14,
+                paddingHorizontal: 16,
+                borderTopWidth: i === 0 ? 0 : 1,
+                borderColor: 'rgba(255,255,255,0.08)',
+              }}
+            >
+              <Text
+                style={{
+                  color: opt.destructive ? '#f87171' : '#e5e7eb',
+                  fontWeight: opt.destructive ? '800' : '700',
+                }}
+              >
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity onPress={onClose} style={{ padding: 16 }}>
+            <Text style={{ color: '#60a5fa', fontWeight: '700', textAlign: 'center' }}>Đóng</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      </TouchableOpacity>
     </Modal>
   );
 }

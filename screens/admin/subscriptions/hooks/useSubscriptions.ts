@@ -1,4 +1,4 @@
-import { type Subscription } from '@/services/subscription';
+import { listSubscriptions, type Subscription } from '@/services/subscription';
 import { useEffect, useState } from 'react';
 function useDebounce<T>(value : T , delay: number){
     const[v , setV] = useState(value);
@@ -42,5 +42,5 @@ export function useSubscriptions(){
     useEffect(() =>{ reload();},[]);
     useEffect(() =>{ reload();},[status, debouncedUid]);
     
-    return{ loading, items, status, setStatus, uidQuery, setUidQuery, reload };
+    return { items, loading, status, setStatus, uidQuery, setUidQuery, reload };
 }
