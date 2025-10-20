@@ -8,7 +8,7 @@ export const I18N = {
     quickActions: 'Bắt đầu nhanh',
     startLearning: 'Bắt đầu học',
     practice: 'Luyện tập',
-    challenge: 'Thử thách',
+    game: 'Trò chơi thử thách',
     stats: 'Thống kê',
     points: 'Điểm',
     badges: 'Huy hiệu',

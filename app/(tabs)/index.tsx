@@ -159,7 +159,7 @@ export default function HomeScreen() {
           <View style={styles.quickRow}>
             <QuickButton palette={palette} icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
             <QuickButton palette={palette} icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
-            <QuickButton palette={palette} icon="flash-outline" label={t('challenge')} onPress={() => router.push('/challenge')} />
+            <QuickButton palette={palette} icon="game-controller-outline" label={t('game')} onPress={() => router.push('/challenge')} />
           </View>
         </View>
 
@@ -168,6 +168,7 @@ export default function HomeScreen() {
           <Text style={styles.cardTitle}>{t('stats')}</Text>
           <View style={styles.statsRow}>
             <StatCard palette={palette} icon="diamond-stone" color="#9333EA" label={t('points')} value={String(user?.points ?? 0)} />
+            {/* <StatCard palette={palette} icon="coin" color="#FBBF24" label={t('coins')} value={String(user?.coins ?? 0)} /> */}
             <StatCard palette={palette} icon="medal-outline" color={palette.mciGold} label={t('badges')} value={String(badgeCount)} />
             <StatCard palette={palette} icon="fire" color={palette.streak} label={t('streak')} value={`${user?.streak ?? 0} ${t('days')}`} />
           </View>
@@ -233,7 +234,7 @@ export default function HomeScreen() {
           <View style={[styles.modalCard, { maxHeight: '78%' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Thông báo</Text>
-              <TouchableOpacity onPress={() => setAnnModalVisible(false)} hitSlop={8}>
+              <TouchableOpacity onPress={() => setAnnModalVisible(false)} hitSlop={8}> {/* close button */}
                 <Ionicons name="close" size={20} color={palette.textMuted} />
               </TouchableOpacity>
             </View>

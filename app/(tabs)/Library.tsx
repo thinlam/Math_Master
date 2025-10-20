@@ -3,10 +3,10 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, FlatList, Modal, RefreshControl, SafeAreaView, StatusBar,
+  ActivityIndicator, FlatList, Modal, RefreshControl, StatusBar,
   Text, TextInput, TouchableOpacity, View
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /* Firebase */
 import { auth, db } from '@/scripts/firebase';

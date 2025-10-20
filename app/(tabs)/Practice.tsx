@@ -209,7 +209,7 @@ export default function PracticeScreen() {
         renderItem={renderItem}
         ListHeaderComponent={header}
         ListEmptyComponent={
-          !loading && (
+          !loading ? (
             <View style={{ alignItems: 'center', marginTop: 48 }}>
               <Text style={{ color: palette.textMuted }}>Không có dữ liệu phù hợp bộ lọc.</Text>
               <TouchableOpacity
@@ -219,7 +219,7 @@ export default function PracticeScreen() {
                 <Text style={{ color: palette.text }}>Xóa bộ lọc</Text>
               </TouchableOpacity>
             </View>
-          )
+          ) : null
         }
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.brandSoft} />}
         onEndReachedThreshold={0.4}

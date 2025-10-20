@@ -3,16 +3,15 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    RefreshControl,
-    SafeAreaView,
-    StatusBar,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  RefreshControl,
+  StatusBar,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /* ---------- Firebase (lấy challenge từ Firestore) ---------- */
 import { db } from '@/scripts/firebase';
@@ -74,6 +73,7 @@ export default function ChallengeScreen() {
         alignItems: 'center',
         elevation: 2,
       }}
+      /* Đi tới trang chi tiết challenge */
       onPress={() => router.push(`/Challenge/${item.id}`)} // đi tới trang chi tiết
     >
       <Ionicons

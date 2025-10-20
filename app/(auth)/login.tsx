@@ -4,19 +4,29 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import {
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    limit,
+    query,
+    serverTimestamp,
+    setDoc,
+    where,
+} from 'firebase/firestore';
 import React, { useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 
 import { LoginStaticStyles as S, themedTokens } from '@/components/style/auth/LoginStyles';
@@ -27,7 +37,26 @@ type FieldErrors = { email?: string; pw?: string; form?: string };
 
 /** Helpers */
 const isEmail = (s: string) => /\S+@\S+\.\S+/.test(s.trim());
+const isUsername = (s: string) => /^[a-zA-Z0-9._-]{3,20}$/.test(s.trim());
 
+/** Chuẩn hoá username (sanitize) */
+function toUsernameLower(raw?: string | null): string | null {
+  if (!raw) return null;
+  const base = raw
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // bỏ dấu tiếng Việt
+    .replace(/[^a-z0-9._-]/g, '') // chỉ giữ a-z0-9._-
+    .replace(/(\.){2,}/g, '.')
+    .replace(/(_){2,}/g, '_')
+    .replace(/(-){2,}/g, '-')
+    .replace(/^\.|\.?$/g, '');
+  if (!base) return null;
+  const clipped = base.slice(0, 20);
+  return clipped.length >= 3 ? clipped : null;
+}
+
+/** Route by role */
 function routeByRole(
   router: ReturnType<typeof useRouter>,
   role?: AppRole,
@@ -40,12 +69,15 @@ function routeByRole(
   return router.replace('/(tabs)');
 }
 
+/** Map Firebase Auth error code to field */
 function mapAuthErrorToField(code?: string): FieldErrors {
   switch (code) {
     case 'auth/invalid-email':
       return { email: 'Email không hợp lệ.' };
+    case 'auth/user-mismatch':
+      return { form: 'Thông tin đăng nhập không đúng.' };
     case 'auth/user-not-found':
-      return { email: 'Không tìm thấy tài khoản với email này.' };
+      return { email: 'Không tìm thấy tài khoản với email/username này.' };
     case 'auth/wrong-password':
       return { pw: 'Mật khẩu không đúng.' };
     case 'auth/too-many-requests':
@@ -60,7 +92,8 @@ function mapAuthErrorToField(code?: string): FieldErrors {
 export default function LoginScreen() {
   const router = useRouter();
 
-  const [email, setEmail] = useState('');
+  // 1 ô: email hoặc username/name
+  const [identifier, setIdentifier] = useState('');
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -71,17 +104,21 @@ export default function LoginScreen() {
   const T = useMemo(() => themedTokens(darkMode), [darkMode]);
 
   const canSubmit = useMemo(() => {
-    const noClientErrors = !validateAll({ email, pw }).hasError;
-    return email.trim().length > 0 && pw.length > 0 && noClientErrors && !loading;
-  }, [email, pw, loading]);
+    const noClientErrors = !validateAll({ identifier, pw }).hasError;
+    return identifier.trim().length > 0 && pw.length > 0 && noClientErrors && !loading;
+  }, [identifier, pw, loading]);
 
   /** Validation */
-  function validateAll(values: { email: string; pw: string }) {
+  function validateAll(values: { identifier: string; pw: string }) {
     const next: FieldErrors = {};
-    if (!values.email.trim()) next.email = 'Vui lòng nhập email.';
-    else if (!isEmail(values.email.trim())) next.email = 'Email không hợp lệ.';
+    const id = values.identifier.trim();
+    if (!id) next.email = 'Vui lòng nhập email hoặc tên đăng nhập.';
+    else if (!(isEmail(id) || isUsername(id)))
+      next.email = 'Nhập email hợp lệ hoặc username/name (3–20 ký tự: a-z, 0-9, . _ -).';
+
     if (!values.pw) next.pw = 'Vui lòng nhập mật khẩu.';
     else if (values.pw.length < 6) next.pw = 'Mật khẩu tối thiểu 6 ký tự.';
+
     return { next, hasError: !!(next.email || next.pw) };
   }
 
@@ -89,14 +126,16 @@ export default function LoginScreen() {
     setErrors((prev) => ({ ...prev, [key]: msg }));
   }
 
-  /** Firestore ensure */
-  const ensureUserProfile = async (uid: string, name?: string | null, mail?: string | null) => {
+  /** Ensure user profile + auto backfill username mapping (và alias theo name) nếu thiếu */
+  const ensureUserProfile = async (uid: string, displayName?: string | null, mail?: string | null) => {
     const uRef = doc(db, 'users', uid);
-    const snap = await getDoc(uRef);
-    if (!snap.exists()) {
+    const uSnap = await getDoc(uRef);
+
+    // Tạo mới nếu thiếu
+    if (!uSnap.exists()) {
       await setDoc(uRef, {
         uid,
-        name: name ?? '',
+        name: displayName ?? '',
         email: mail ?? '',
         role: 'user',
         level: null,
@@ -107,39 +146,144 @@ export default function LoginScreen() {
     } else {
       await setDoc(uRef, { updatedAt: serverTimestamp() }, { merge: true });
     }
+
+    const fresh = (await getDoc(uRef)).data() as any;
+
+    // --- Main usernameLower ---
+    let usernameLower: string | null =
+      fresh?.usernameLower ??
+      toUsernameLower(fresh?.name) ??
+      toUsernameLower(displayName) ??
+      toUsernameLower(mail?.split('@')[0]);
+
+    if (!usernameLower) usernameLower = ('u' + uid.slice(0, 7)).toLowerCase();
+
+    // Đảm bảo không trùng mapping
+    let finalUsername = usernameLower;
+    for (let i = 0; i < 3; i++) {
+      const mapRef = doc(db, 'usernames', finalUsername!);
+      const mapSnap = await getDoc(mapRef);
+      if (!mapSnap.exists()) {
+        await setDoc(mapRef, { uid, email: mail ?? '' });
+        break;
+      } else {
+        const owner = (mapSnap.data() as any)?.uid;
+        if (owner === uid) break; // mình đã sở hữu
+        const suffix = Math.floor(100 + Math.random() * 899);
+        finalUsername = (usernameLower + suffix).slice(0, 20);
+      }
+    }
+
+    // Lưu vào users
+    await setDoc(
+      uRef,
+      {
+        usernameLower: finalUsername,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    // --- Alias theo name (để gõ name cũng vào được) ---
+    const nameLower = toUsernameLower(fresh?.name) ?? null;
+    if (nameLower) {
+      const aliasRef = doc(db, 'usernames', nameLower);
+      const aliasSnap = await getDoc(aliasRef);
+      const owner = aliasSnap.exists() ? (aliasSnap.data() as any)?.uid : null;
+      if (!aliasSnap.exists() || owner === uid) {
+        await setDoc(aliasRef, { uid, email: mail ?? '' }, { merge: true });
+      }
+      await setDoc(uRef, { nameLower }, { merge: true });
+    }
+  };
+
+  /**
+   * identifier -> email:
+   * - Email: dùng luôn
+   * - Username/Name: tra usernames/{usernameLower} -> email
+   *   Fallback: users.usernameLower == idLower
+   *   Fallback 2: users.name == raw OR users.nameLower == idLower
+   */
+  
+  const resolveIdentifierToEmail = async (idInput: string): Promise<string> => {
+    const id = idInput.trim();
+    if (isEmail(id)) return id;
+
+    const idLower = id.toLowerCase();
+    const usersCol = collection(db, 'users');
+
+    // 1) mapping nhanh
+    const mapRef = doc(db, 'usernames', idLower); 
+    const mapSnap = await getDoc(mapRef);
+    if (mapSnap.exists()) {
+      const data = mapSnap.data() as any;
+      if (data?.email) return String(data.email);
+    }
+
+    // 2) users.usernameLower // fallback
+    const qUserLower = query(usersCol, where('usernameLower', '==', idLower), limit(1)); /// eslint-disable-line no-unused-vars
+    const rUserLower = await getDocs(qUserLower); /// eslint-disable-line no-unused-vars
+    if (!rUserLower.empty) {
+      const u = rUserLower.docs[0].data() as any;
+      if (u?.email) return String(u.email);
+    }
+
+    // 3) users.name (exact)
+    const qNameExact = query(usersCol, where('name', '==', id), limit(1)); 
+    const rNameExact = await getDocs(qNameExact);
+    if (!rNameExact.empty) {
+      const u = rNameExact.docs[0].data() as any;
+      if (u?.email) return String(u.email);
+    }
+
+    // 4) users.nameLower (nếu đã backfill)
+    const qNameLower = query(usersCol, where('nameLower', '==', idLower), limit(1));
+    const rNameLower = await getDocs(qNameLower);
+    if (!rNameLower.empty) {
+      const u = rNameLower.docs[0].data() as any;
+      if (u?.email) return String(u.email);
+    }
+
+    // Không tìm được
+    throw Object.assign(new Error('not-found'), { code: 'auth/user-not-found' });
   };
 
   /** Submit */
   const onLogin = async () => {
     setField('form', undefined);
-    const { next, hasError } = validateAll({ email, pw });
+    const { next, hasError } = validateAll({ identifier, pw });
     setErrors(next);
     if (hasError) return;
 
     try {
       setLoading(true);
-      const cred = await signInWithEmailAndPassword(auth, email.trim(), pw);
-      const user = cred.user;
-      await ensureUserProfile(user.uid, user.displayName, user.email);
+      const emailResolved = await resolveIdentifierToEmail(identifier);
 
-      const uSnap = await getDoc(doc(db, 'users', user.uid));
-      const data = uSnap.data() || {};
-      const role: AppRole = (data?.role as AppRole) || 'user';
-      const level = (data.level as number | null) ?? null;
-      const startMode = (data.startMode as string | null) ?? null;
+      const cred = await signInWithEmailAndPassword(auth, emailResolved.trim(), pw);
+      const user = cred.user;
+
+      // Tự “sửa DB” nếu thiếu usernameLower / alias theo name
+      await ensureUserProfile(user.uid, user.displayName, user.email); // đảm bảo profile tồn tại + backfill mapping nếu thiếu 
+
+      const uSnap = await getDoc(doc(db, 'users', user.uid)); // lấy lại profile
+      const data = uSnap.data() || {}; 
+      const role: AppRole = (data?.role as AppRole) || 'user'; 
+      const level = (data as any).level ?? null;
+      const startMode = (data as any).startMode ?? null;
 
       setErrors({});
       Alert.alert('Thành công', 'Đăng nhập thành công!');
       routeByRole(router, role, { level, startMode });
     } catch (e: any) {
-      const mapped = mapAuthErrorToField(e?.code);
-      setErrors((prev) => ({ ...prev, ...mapped }));
+      const mapped = mapAuthErrorToField(e?.code); // map error code to field
+      setErrors((prev) => ({ ...prev, ...mapped })); // merge errors 
     } finally {
       setLoading(false);
     }
   };
 
-  const onForgot = () => router.push({ pathname: '/(auth)/ForgotPassword', params: { email } });
+  const onForgot = () =>
+    router.push({ pathname: '/(auth)/ForgotPassword', params: { email: isEmail(identifier) ? identifier : '' } });
   const onLoginWithGoogle = () => Alert.alert('Google', 'Gắn logic đăng nhập Google ở đây.');
 
   return (
@@ -159,7 +303,7 @@ export default function LoginScreen() {
               <Image
                 source={require('../../assets/images/icon_math_resized.png')}
                 onError={() => setUseLogoFallback(true)}
-                style={[S.logo, { opacity: darkMode ? 0.95 : 1,width: 200, height: 200,borderRadius: 200 }]}  // bo tròn 
+                style={[S.logo, { opacity: darkMode ? 0.95 : 1, width: 200, height: 200, borderRadius: 200 }]}
               />
             )}
             <Text style={[S.title, { color: T.text }]}>Đăng nhập</Text>
@@ -175,16 +319,25 @@ export default function LoginScreen() {
               </View>
             )}
 
-            {/* Email */}
-            <View style={[S.inputRow, { borderColor: errors.email ? T.errorBorder : T.border, backgroundColor: T.inputBg }]}>
-              <MaterialCommunityIcons name="email-outline" size={18} color={errors.email ? T.errorText : T.subText} />
+            {/* Identifier (Email or Username/Name) */}
+            <View
+              style={[
+                S.inputRow,
+                { borderColor: errors.email ? T.errorBorder : T.border, backgroundColor: T.inputBg },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="account-circle-outline"
+                size={18}
+                color={errors.email ? T.errorText : T.subText}
+              />
               <TextInput
-                placeholder="Email"
+                placeholder="Email hoặc Tên đăng nhập"
                 placeholderTextColor={T.subText}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                value={email}
-                onChangeText={(v) => setEmail(v)}
+                value={identifier}
+                onChangeText={(v) => setIdentifier(v)}
                 style={[S.input, { color: T.text }]}
               />
               {errors.email && <Ionicons name="alert-circle" size={18} color={T.errorText} />}
@@ -192,7 +345,12 @@ export default function LoginScreen() {
             {errors.email && <Text style={[S.inputErrorTxt, { color: T.errorText }]}>{errors.email}</Text>}
 
             {/* Password */}
-            <View style={[S.inputRow, { borderColor: errors.pw ? T.errorBorder : T.border, backgroundColor: T.inputBg }]}>
+            <View
+              style={[
+                S.inputRow,
+                { borderColor: errors.pw ? T.errorBorder : T.border, backgroundColor: T.inputBg },
+              ]}
+            >
               <MaterialCommunityIcons name="lock-outline" size={18} color={errors.pw ? T.errorText : T.subText} />
               <TextInput
                 placeholder="Mật khẩu"
