@@ -124,7 +124,15 @@ export default function TabLayout() {
         name="Practice/Daily"
         options={{ href: null }}
       />
-      
+      <Tabs.Screen
+        name="Profile/ChangePassword"
+        options={{ href: null }}
+      />
+
+      <Tabs.Screen
+        name="Profile/reset-password"
+        options={{ href: null }}
+      />
     </Tabs>
   );
 }

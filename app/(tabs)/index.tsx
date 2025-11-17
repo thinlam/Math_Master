@@ -159,7 +159,7 @@ export default function HomeScreen() {
           <View style={styles.quickRow}>
             <QuickButton palette={palette} icon="rocket-outline" label={t('startLearning')} onPress={handleStartLearning} />
             <QuickButton palette={palette} icon="create-outline" label={t('practice')} onPress={() => router.push('/(tabs)/Practice')} />
-            <QuickButton palette={palette} icon="game-controller-outline" label={t('game')} onPress={() => router.push('/challenge')} />
+            <QuickButton palette={palette} icon="game-controller-outline" label={t('game')} onPress={() => router.push('/(tabs)/Playgame')} />
           </View>
         </View>
 

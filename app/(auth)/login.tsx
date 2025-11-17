@@ -5,28 +5,28 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
-    collection,
-    doc,
-    getDoc,
-    getDocs,
-    limit,
-    query,
-    serverTimestamp,
-    setDoc,
-    where,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
 } from 'firebase/firestore';
 import React, { useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 import { LoginStaticStyles as S, themedTokens } from '@/components/style/auth/LoginStyles';
@@ -103,24 +103,43 @@ export default function LoginScreen() {
   const [useLogoFallback, setUseLogoFallback] = useState(false);
   const T = useMemo(() => themedTokens(darkMode), [darkMode]);
 
-  const canSubmit = useMemo(() => {
-    const noClientErrors = !validateAll({ identifier, pw }).hasError;
-    return identifier.trim().length > 0 && pw.length > 0 && noClientErrors && !loading;
-  }, [identifier, pw, loading]);
-
   /** Validation */
   function validateAll(values: { identifier: string; pw: string }) {
     const next: FieldErrors = {};
     const id = values.identifier.trim();
-    if (!id) next.email = 'Vui lòng nhập email hoặc tên đăng nhập.';
-    else if (!(isEmail(id) || isUsername(id)))
-      next.email = 'Nhập email hợp lệ hoặc username/name (3–20 ký tự: a-z, 0-9, . _ -).';
+    const pwVal = values.pw;
 
-    if (!values.pw) next.pw = 'Vui lòng nhập mật khẩu.';
-    else if (values.pw.length < 6) next.pw = 'Mật khẩu tối thiểu 6 ký tự.';
+    // CASE 1: Có mật khẩu nhưng không có tài khoản
+    if (!id && pwVal) {
+      next.email = 'Cần nhập tài khoản';
+    }
+    // CASE 2: Có tài khoản nhưng không có mật khẩu
+    else if (id && !pwVal) {
+      next.form = 'Không thể đăng nhập, xin vui lòng thử lại';
+    }
+    // CASE 3: Các trường hợp còn lại dùng validate bình thường
+    else {
+      if (!id) {
+        next.email = 'Vui lòng nhập email hoặc tên đăng nhập.';
+      } else if (!(isEmail(id) || isUsername(id))) {
+        next.email = 'Nhập email hợp lệ hoặc username/name (3–20 ký tự: a-z, 0-9, . _ -).';
+      }
 
-    return { next, hasError: !!(next.email || next.pw) };
+      if (!pwVal) {
+        next.pw = 'Vui lòng nhập mật khẩu.';
+      } else if (pwVal.length < 6) {
+        next.pw = 'Mật khẩu tối thiểu 6 ký tự.';
+      }
+    }
+
+    return { next, hasError: !!(next.email || next.pw || next.form) };
   }
+
+  const canSubmit = useMemo(() => {
+    // Chỉ cần có ít nhất 1 ô được nhập là cho bấm, để show message custom
+    const hasAnyInput = identifier.trim().length > 0 || pw.length > 0;
+    return hasAnyInput && !loading;
+  }, [identifier, pw, loading]);
 
   function setField<K extends keyof FieldErrors>(key: K, msg?: string) {
     setErrors((prev) => ({ ...prev, [key]: msg }));
@@ -204,7 +223,6 @@ export default function LoginScreen() {
    *   Fallback: users.usernameLower == idLower
    *   Fallback 2: users.name == raw OR users.nameLower == idLower
    */
-  
   const resolveIdentifierToEmail = async (idInput: string): Promise<string> => {
     const id = idInput.trim();
     if (isEmail(id)) return id;
@@ -213,7 +231,7 @@ export default function LoginScreen() {
     const usersCol = collection(db, 'users');
 
     // 1) mapping nhanh
-    const mapRef = doc(db, 'usernames', idLower); 
+    const mapRef = doc(db, 'usernames', idLower);
     const mapSnap = await getDoc(mapRef);
     if (mapSnap.exists()) {
       const data = mapSnap.data() as any;
@@ -229,7 +247,7 @@ export default function LoginScreen() {
     }
 
     // 3) users.name (exact)
-    const qNameExact = query(usersCol, where('name', '==', id), limit(1)); 
+    const qNameExact = query(usersCol, where('name', '==', id), limit(1));
     const rNameExact = await getDocs(qNameExact);
     if (!rNameExact.empty) {
       const u = rNameExact.docs[0].data() as any;
@@ -263,20 +281,20 @@ export default function LoginScreen() {
       const user = cred.user;
 
       // Tự “sửa DB” nếu thiếu usernameLower / alias theo name
-      await ensureUserProfile(user.uid, user.displayName, user.email); // đảm bảo profile tồn tại + backfill mapping nếu thiếu 
+      await ensureUserProfile(user.uid, user.displayName, user.email); // đảm bảo profile tồn tại + backfill mapping nếu thiếu
 
       const uSnap = await getDoc(doc(db, 'users', user.uid)); // lấy lại profile
-      const data = uSnap.data() || {}; 
-      const role: AppRole = (data?.role as AppRole) || 'user'; 
+      const data = uSnap.data() || {};
+      const role: AppRole = (data?.role as AppRole) || 'user';
       const level = (data as any).level ?? null;
       const startMode = (data as any).startMode ?? null;
 
       setErrors({});
-      Alert.alert('Thành công', 'Đăng nhập thành công!');
+      Alert.alert('Đăng nhập thành công');
       routeByRole(router, role, { level, startMode });
     } catch (e: any) {
       const mapped = mapAuthErrorToField(e?.code); // map error code to field
-      setErrors((prev) => ({ ...prev, ...mapped })); // merge errors 
+      setErrors((prev) => ({ ...prev, ...mapped })); // merge errors
     } finally {
       setLoading(false);
     }
@@ -298,7 +316,10 @@ export default function LoginScreen() {
           {/* Header */}
           <View style={S.header}>
             {useLogoFallback ? (
-              <Image source={{ uri: 'https://i.imgur.com/8wPDJ8K.png' }} style={[S.logo, { opacity: darkMode ? 0.95 : 1 }]} />
+              <Image
+                source={{ uri: 'https://i.imgur.com/8wPDJ8K.png' }}
+                style={[S.logo, { opacity: darkMode ? 0.95 : 1 }]}
+              />
             ) : (
               <Image
                 source={require('../../assets/images/icon_math_resized.png')}
@@ -361,7 +382,11 @@ export default function LoginScreen() {
                 style={[S.input, { color: T.text }]}
               />
               <TouchableOpacity onPress={() => setShowPw(!showPw)}>
-                <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={errors.pw ? T.errorText : T.subText} />
+                <Ionicons
+                  name={showPw ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={errors.pw ? T.errorText : T.subText}
+                />
               </TouchableOpacity>
               {errors.pw && <Ionicons name="alert-circle" size={18} color={T.errorText} />}
             </View>
@@ -389,8 +414,14 @@ export default function LoginScreen() {
             </View>
 
             {/* Google */}
-            <TouchableOpacity onPress={onLoginWithGoogle} style={[S.socialBtn, { backgroundColor: T.socialBg, borderColor: T.border }]}>
-              <Image source={{ uri: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg' }} style={S.googleIcon} />
+            <TouchableOpacity
+              onPress={onLoginWithGoogle}
+              style={[S.socialBtn, { backgroundColor: T.socialBg, borderColor: T.border }]}
+            >
+              <Image
+                source={{ uri: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg' }}
+                style={S.googleIcon}
+              />
               <Text style={{ color: T.text, fontWeight: '600' }}>Đăng nhập với Google</Text>
             </TouchableOpacity>
           </View>

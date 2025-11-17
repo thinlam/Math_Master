@@ -422,7 +422,7 @@ export default function ProfileScreen() {
 
         {/* Account */}
         <Section title={t(language, 'account')} palette={palette}>
-          <SettingItem icon="key-outline" label={t(language, 'changePassword')} onPress={() => router.push('/profile/ChangePassword')} palette={palette} />
+          <SettingItem icon="key-outline" label={t(language, 'changePassword')} onPress={() => router.push('/(tabs)/Profile/ChangePassword')} palette={palette} />
           <SettingItem icon="logo-google" label={t(language, 'linkGoogle')} onPress={() => Alert.alert(t(language, 'linkGoogle'), 'Demo')} palette={palette} />
         </Section>
 
